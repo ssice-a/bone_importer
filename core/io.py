@@ -9,6 +9,13 @@ import bpy
 from .models import LoadedPaletteFile
 
 
+IDENTITY_ROW_VALUES = (
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+)
+
+
 def resolve_palette_export_paths(raw_output_path, armature_name):
     """解析导出二进制文件和同名元数据文件的路径。"""
     output_path = bpy.path.abspath(raw_output_path or "//")
@@ -39,6 +46,56 @@ def write_palette_package_to_disk(package, output_path, armature_name, write_met
     if write_metadata:
         with open(metadata_path, "w", encoding="utf-8") as metadata_file:
             json.dump(package["metadata"], metadata_file, indent=2, ensure_ascii=False)
+
+    return binary_path, metadata_path
+
+
+def ensure_palette_binary_file(binary_path, buffer_row_count):
+    """确保导出目标二进制存在且大小符合预期。"""
+    expected_size = int(buffer_row_count) * 16
+    current_size = os.path.getsize(binary_path) if os.path.exists(binary_path) else -1
+    if current_size == expected_size:
+        return
+
+    output_directory = os.path.dirname(binary_path)
+    if output_directory:
+        os.makedirs(output_directory, exist_ok=True)
+
+    full_identity_rows = int(buffer_row_count) // 3
+    remainder_row_count = int(buffer_row_count) % 3
+    flat_float_values = array("f", IDENTITY_ROW_VALUES * full_identity_rows)
+    if remainder_row_count:
+        flat_float_values.extend(IDENTITY_ROW_VALUES[: remainder_row_count * 4])
+
+    with open(binary_path, "wb") as binary_file:
+        flat_float_values.tofile(binary_file)
+
+
+def write_palette_row_patches_to_disk(
+    row_patches,
+    output_path,
+    armature_name,
+    buffer_row_count,
+    metadata,
+    write_metadata=True,
+):
+    """把若干 float4 行 patch 直接写入现有导出文件。"""
+    binary_path, metadata_path = resolve_palette_export_paths(output_path, armature_name)
+    ensure_palette_binary_file(binary_path, buffer_row_count)
+
+    with open(binary_path, "r+b") as binary_file:
+        for row_start, rows in row_patches:
+            if not rows:
+                continue
+            flat_float_values = array("f")
+            for row in rows:
+                flat_float_values.extend(row)
+            binary_file.seek(int(row_start) * 16)
+            flat_float_values.tofile(binary_file)
+
+    if write_metadata:
+        with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2, ensure_ascii=False)
 
     return binary_path, metadata_path
 

@@ -108,6 +108,20 @@ def list_selected_proxy_armatures(context):
     return tuple(sorted(selected_armatures.values(), key=lambda armature: (armature.bi_part_id, armature.name)))
 
 
+def list_directly_selected_proxy_armatures(context):
+    """只列出直接被选中的代理骨架对象，不把选中的 mesh 折算进来。"""
+    selected_armatures = {}
+    for obj in context.selected_objects:
+        if obj.type != "ARMATURE":
+            continue
+        if not getattr(obj, "bi_is_proxy_armature", False):
+            continue
+        if int(getattr(obj, "bi_part_id", -1)) < 0:
+            continue
+        selected_armatures[obj.name_full] = obj
+    return tuple(sorted(selected_armatures.values(), key=lambda armature: (armature.bi_part_id, armature.name)))
+
+
 def make_object_active(context, obj, mode=None):
     """选中对象并设为活动对象；必要时切换模式。"""
     if context.object and context.object.mode != "OBJECT":

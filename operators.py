@@ -7,7 +7,6 @@ from .core.workflow import (
     capture_bind_for_active_proxy,
     clear_previous_palette_for_active_proxy,
     dump_debug_for_active_proxy,
-    export_palette_for_active_proxy,
     export_palette_for_selected_proxy_armatures,
     generate_proxy_rig_from_active_mesh,
     generate_proxy_rigs_from_selected_meshes,
@@ -123,39 +122,11 @@ class BI_OT_export_palette(bpy.types.Operator):
         return bool(list_selected_proxy_armatures(context))
 
     def execute(self, context):
-        selected_armatures = list_selected_proxy_armatures(context)
-        if len(selected_armatures) > 1:
-            try:
-                result = export_palette_for_selected_proxy_armatures(
-                    context,
-                    output_path=context.scene.bi_output_path,
-                    write_metadata=bool(context.scene.bi_write_metadata),
-                    base_buffer_path=context.scene.bi_import_path,
-                )
-            except ValueError as exc:
-                self.report({"ERROR"}, str(exc))
-                return {"CANCELLED"}
-            except Exception as exc:
-                self.report({"ERROR"}, f"Export failed: {exc}")
-                return {"CANCELLED"}
-
-            message = (
-                f"Exported {result.exported_bones} bones from {result.exported_armatures}"
-                f"/{result.selected_armatures} selected armatures to {result.binary_path}"
-            )
-            if result.overflow_bones:
-                message += f"; {result.overflow_bones} overflowed the part window"
-            self.report({"INFO"}, message)
-            if result.failed_armatures:
-                self.report({"WARNING"}, "; ".join(result.failed_armatures))
-            return {"FINISHED"}
-
         try:
-            result = export_palette_for_active_proxy(
-                context.active_object,
+            result = export_palette_for_selected_proxy_armatures(
+                context,
                 output_path=context.scene.bi_output_path,
                 write_metadata=bool(context.scene.bi_write_metadata),
-                base_buffer_path=context.scene.bi_import_path,
             )
         except ValueError as exc:
             self.report({"ERROR"}, str(exc))
@@ -164,16 +135,15 @@ class BI_OT_export_palette(bpy.types.Operator):
             self.report({"ERROR"}, f"Export failed: {exc}")
             return {"CANCELLED"}
 
-        message = f"Exported {result.exported_bones} bones to {result.binary_path}"
+        message = (
+            f"Exported {result.exported_bones} bones from {result.exported_armatures}"
+            f"/{result.selected_armatures} selected armatures to {result.binary_path}"
+        )
         if result.overflow_bones:
             message += f"; {result.overflow_bones} overflowed the part window"
         self.report({"INFO"}, message)
-        if result.other_armature_modifiers:
-            modifier_names = ", ".join(result.other_armature_modifiers)
-            self.report(
-                {"WARNING"},
-                f"Other armature modifiers are still active on the source mesh: {modifier_names}.",
-            )
+        if result.failed_armatures:
+            self.report({"WARNING"}, "; ".join(result.failed_armatures))
         return {"FINISHED"}
 
 

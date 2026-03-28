@@ -1,6 +1,4 @@
-"""把底层能力组织成 Blender 可直接调用的工作流。"""
-
-import os
+"""High-level workflows used by Blender operators."""
 
 import bpy
 
@@ -11,13 +9,14 @@ from .context import (
     ensure_mesh_parented_to_proxy_armature,
     find_proxy_armature_for_object,
     find_source_mesh_for_object,
+    list_directly_selected_proxy_armatures,
     list_selected_proxy_armatures,
     make_object_active,
     restore_selection_state,
 )
 from .debug import build_proxy_debug_snapshot, print_debug_snapshot
 from .export import (
-    build_palette_export_package,
+    build_palette_export_write_plan_for_proxy_armatures,
     cache_current_palette_segment,
     clear_previous_palette_cache,
 )
@@ -25,9 +24,8 @@ from .importer import apply_palette_segment_to_proxy_armature, resolve_palette_s
 from .io import (
     build_metadata_path_from_binary_path,
     load_palette_file,
-    read_palette_rows_from_file,
     read_palette_metadata_from_file,
-    write_palette_package_to_disk,
+    write_palette_row_patches_to_disk,
 )
 from .layout import calculate_slot_capacity_for_part_size
 from .models import (
@@ -52,14 +50,14 @@ from .proxy import (
 
 
 def prepare_proxy_armature(proxy_armature, require_part_id=False):
-    """同步 part_id 派生布局，并返回代理骨架对应的源网格。"""
+    """Sync derived layout settings and return the linked source mesh."""
     source_mesh = find_source_mesh_for_object(proxy_armature)
     apply_part_id_layout(proxy_armature, require_configured=require_part_id)
     return source_mesh
 
 
 def build_proxy_generation_result(source_mesh, proxy_armature, proxy_bone_build, configured_bone_count):
-    """整理单个网格的代理骨生成结果。"""
+    """Build the result summary for one generated proxy rig."""
     bone_definitions = proxy_bone_build["bone_definitions"]
     max_slot_id = max((bone_definition["slot_id"] for bone_definition in bone_definitions), default=-1)
     slot_capacity = calculate_slot_capacity_for_part_size(
@@ -78,7 +76,7 @@ def build_proxy_generation_result(source_mesh, proxy_armature, proxy_bone_build,
 
 
 def generate_proxy_rig_for_mesh(context, source_mesh):
-    """从单个网格的顶点组生成代理骨架。"""
+    """Generate a proxy armature for one mesh."""
     if source_mesh is None or source_mesh.type != "MESH":
         raise ValueError("Active object must be a mesh")
 
@@ -103,18 +101,17 @@ def generate_proxy_rig_for_mesh(context, source_mesh):
 
 
 def generate_proxy_rig_from_active_mesh(context):
-    """从当前活动网格生成单个代理骨架。"""
+    """Generate a proxy armature from the active mesh."""
     return generate_proxy_rig_for_mesh(context, context.active_object)
 
 
 def generate_proxy_rigs_from_selected_meshes(context):
-    """为当前选中的多个网格批量生成代理骨架。"""
+    """Generate proxy armatures for all selected meshes."""
     selected_meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
     if not selected_meshes:
         raise ValueError("Select at least one mesh object")
 
     selection_state = capture_selection_state(context)
-
     generated_meshes = 0
     generated_armatures = set()
     generated_bones = 0
@@ -153,7 +150,7 @@ def generate_proxy_rigs_from_selected_meshes(context):
 
 
 def capture_bind_for_proxy_armature(proxy_armature):
-    """为指定代理骨架捕获 bind 矩阵。"""
+    """Capture bind matrices for one proxy armature."""
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
 
@@ -172,148 +169,94 @@ def capture_bind_for_proxy_armature(proxy_armature):
 
 
 def capture_bind_for_active_proxy(active_object):
-    """为当前对象对应的代理骨架捕获 bind 矩阵。"""
+    """Capture bind matrices for the active proxy armature."""
     proxy_armature = find_proxy_armature_for_object(active_object)
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
     return capture_bind_for_proxy_armature(proxy_armature)
 
 
-def export_palette_for_proxy_armature(proxy_armature, output_path, write_metadata=True, base_buffer_path=""):
-    """把指定代理骨架导出成 VS-T0 调色板文件。"""
-    if proxy_armature is None:
-        raise ValueError("No proxy armature found")
+def build_export_target_proxy_armatures(context):
+    """Resolve which proxy armatures should be exported."""
+    directly_selected_armatures = list_directly_selected_proxy_armatures(context)
+    if len(directly_selected_armatures) > 1:
+        return directly_selected_armatures
 
-    source_mesh = prepare_proxy_armature(proxy_armature, require_part_id=True)
-    resolved_base_buffer_path = bpy.path.abspath(base_buffer_path) if base_buffer_path else ""
-    base_buffer_rows = None
-    if resolved_base_buffer_path and os.path.exists(resolved_base_buffer_path):
-        base_buffer_rows = read_palette_rows_from_file(resolved_base_buffer_path)
+    active_proxy_armature = find_proxy_armature_for_object(context.active_object)
+    if active_proxy_armature is not None:
+        return (active_proxy_armature,)
 
-    export_package = build_palette_export_package(
-        proxy_armature,
-        base_buffer_rows=base_buffer_rows,
-        base_buffer_path=resolved_base_buffer_path,
-    )
-    binary_path, metadata_path = write_palette_package_to_disk(
-        export_package,
-        output_path=output_path,
-        armature_name=proxy_armature.name,
-        write_metadata=write_metadata,
-    )
-    cache_current_palette_segment(proxy_armature, export_package["current_segment"])
-
-    metadata = export_package["metadata"]
-    other_armature_modifiers = ()
-    if source_mesh is not None:
-        other_armature_modifiers = list_other_armature_modifier_names(source_mesh, proxy_armature)
-    return PaletteExportResult(
-        armature_name=proxy_armature.name,
-        binary_path=binary_path,
-        metadata_path=metadata_path,
-        exported_bones=len(metadata.get("exported_bones", [])),
-        overflow_bones=len(metadata.get("overflow_bones", [])),
-        metadata=metadata,
-        other_armature_modifiers=other_armature_modifiers,
-    )
-
-
-def export_palette_for_active_proxy(active_object, output_path, write_metadata=True, base_buffer_path=""):
-    """把当前对象对应的代理骨架导出成 VS-T0 调色板文件。"""
-    proxy_armature = find_proxy_armature_for_object(active_object)
-    if proxy_armature is None:
-        raise ValueError("No proxy armature found")
-    return export_palette_for_proxy_armature(proxy_armature, output_path, write_metadata, base_buffer_path)
-
-
-def export_palette_for_selected_proxy_armatures(context, output_path, write_metadata=True, base_buffer_path=""):
-    """把当前选中的多个代理骨架合并导出到同一份大缓冲文件。"""
     selected_armatures = list_selected_proxy_armatures(context)
-    if not selected_armatures:
-        raise ValueError("No selected proxy armatures with Part Id found")
+    if selected_armatures:
+        return (selected_armatures[0],)
+
+    raise ValueError("No selected proxy armatures with Part Id found")
+
+
+def export_palette_for_proxy_armatures(context, proxy_armatures, output_path, write_metadata=True):
+    """Export one or more proxy armatures into a single buffer file."""
+    normalized_armatures = tuple(proxy_armatures)
+    if not normalized_armatures:
+        raise ValueError("No proxy armatures to export")
 
     selection_state = capture_selection_state(context)
-    resolved_base_buffer_path = bpy.path.abspath(base_buffer_path) if base_buffer_path else ""
-    base_buffer_rows = None
-    if resolved_base_buffer_path and os.path.exists(resolved_base_buffer_path):
-        base_buffer_rows = read_palette_rows_from_file(resolved_base_buffer_path)
-
-    merged_buffer_rows = base_buffer_rows
-    exported_bones = 0
-    overflow_bones = 0
-    failed_armatures = []
-    exported_parts = []
 
     try:
-        for proxy_armature in selected_armatures:
-            try:
-                prepare_proxy_armature(proxy_armature, require_part_id=True)
-                export_package = build_palette_export_package(
-                    proxy_armature,
-                    base_buffer_rows=merged_buffer_rows,
-                    base_buffer_path=resolved_base_buffer_path,
-                )
-            except Exception as exc:
-                failed_armatures.append(f"{proxy_armature.name}: {exc}")
-                continue
-
-            merged_buffer_rows = export_package["buffer_rows"]
-            cache_current_palette_segment(proxy_armature, export_package["current_segment"])
-
-            part_metadata = export_package["metadata"]
-            exported_parts.append(
-                {
-                    "armature_name": proxy_armature.name,
-                    "part_id": int(getattr(proxy_armature, "bi_part_id", -1)),
-                    "part_base": int(getattr(proxy_armature, "bi_part_base", 0)),
-                    "part_size": int(getattr(proxy_armature, "bi_part_size", DEFAULT_PART_ROW_COUNT)),
-                    "exported_bones": len(part_metadata.get("exported_bones", [])),
-                    "overflow_bones": len(part_metadata.get("overflow_bones", [])),
-                    "used_slots": list(part_metadata.get("used_slots", [])),
-                }
-            )
-            exported_bones += len(part_metadata.get("exported_bones", []))
-            overflow_bones += len(part_metadata.get("overflow_bones", []))
+        for proxy_armature in normalized_armatures:
+            prepare_proxy_armature(proxy_armature, require_part_id=True)
+        write_plan = build_palette_export_write_plan_for_proxy_armatures(normalized_armatures)
+        for proxy_armature, part_patch in zip(normalized_armatures, write_plan["part_patches"]):
+            cache_current_palette_segment(proxy_armature, part_patch["current_segment"])
     finally:
         restore_selection_state(context, selection_state)
 
-    if not exported_parts:
-        raise ValueError("No selected proxy armatures could be exported")
-
-    merged_metadata = {
-        "format": "vs_t0_palette_batch_v1",
-        "export_mode": "patch_selected_parts",
-        "base_buffer_path": resolved_base_buffer_path,
-        "selected_armatures": len(selected_armatures),
-        "exported_armatures": len(exported_parts),
-        "buffer_row_count": len(merged_buffer_rows or []),
-        "parts": exported_parts,
-    }
-    merged_package = {
-        "buffer_rows": merged_buffer_rows,
-        "metadata": merged_metadata,
-    }
-    binary_path, metadata_path = write_palette_package_to_disk(
-        merged_package,
+    binary_path, metadata_path = write_palette_row_patches_to_disk(
+        write_plan["row_patches"],
         output_path=output_path,
         armature_name="selected_parts",
+        buffer_row_count=write_plan["buffer_row_count"],
+        metadata=write_plan["metadata"],
         write_metadata=write_metadata,
     )
 
+    parts_metadata = write_plan["metadata"].get("parts", [])
     return BatchPaletteExportResult(
         binary_path=binary_path,
         metadata_path=metadata_path,
-        selected_armatures=len(selected_armatures),
-        exported_armatures=len(exported_parts),
-        exported_bones=exported_bones,
-        overflow_bones=overflow_bones,
-        failed_armatures=tuple(failed_armatures),
-        metadata=merged_metadata,
+        selected_armatures=len(normalized_armatures),
+        exported_armatures=len(parts_metadata),
+        exported_bones=sum(len(part.get("exported_bones", ())) for part in parts_metadata),
+        overflow_bones=len(write_plan["metadata"].get("overflow_bones", ())),
+        failed_armatures=(),
+        metadata=write_plan["metadata"],
     )
 
 
+def export_palette_for_selected_proxy_armatures(context, output_path, write_metadata=True):
+    """Export the current target proxy armature set."""
+    return export_palette_for_proxy_armatures(
+        context,
+        build_export_target_proxy_armatures(context),
+        output_path,
+        write_metadata,
+    )
+
+
+def export_palette_for_proxy_armature(proxy_armature, output_path, write_metadata=True):
+    """Compatibility wrapper for exporting one proxy armature."""
+    return export_palette_for_proxy_armatures(bpy.context, (proxy_armature,), output_path, write_metadata)
+
+
+def export_palette_for_active_proxy(active_object, output_path, write_metadata=True):
+    """Compatibility wrapper for exporting the active proxy armature."""
+    proxy_armature = find_proxy_armature_for_object(active_object)
+    if proxy_armature is None:
+        raise ValueError("No proxy armature found")
+    return export_palette_for_proxy_armature(proxy_armature, output_path, write_metadata)
+
+
 def import_palette_for_proxy_armature(context, proxy_armature, binary_path, segment="CURRENT"):
-    """从磁盘读取调色板，并把一个片段应用到指定代理骨架。"""
+    """Import one palette segment onto one proxy armature."""
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
 
@@ -351,7 +294,7 @@ def import_palette_for_proxy_armature(context, proxy_armature, binary_path, segm
 
 
 def import_palette_for_active_proxy(context, active_object, binary_path, segment="CURRENT"):
-    """把调色板导入到当前对象对应的代理骨架。"""
+    """Import a palette onto the active proxy armature."""
     proxy_armature = find_proxy_armature_for_object(active_object)
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
@@ -359,13 +302,12 @@ def import_palette_for_active_proxy(context, active_object, binary_path, segment
 
 
 def import_palette_for_selected_proxy_armatures(context, binary_path, segment="CURRENT"):
-    """把同一份调色板应用到当前选中的多个代理骨架。"""
+    """Import the same palette into all selected proxy armatures."""
     selected_armatures = list_selected_proxy_armatures(context)
     if not selected_armatures:
         raise ValueError("No selected proxy armatures with Part Id found")
 
     selection_state = capture_selection_state(context)
-
     imported_armatures = 0
     imported_bones = 0
     failed_armatures = []
@@ -393,7 +335,7 @@ def import_palette_for_selected_proxy_armatures(context, binary_path, segment="C
 
 
 def clear_previous_palette_for_active_proxy(active_object):
-    """清空当前对象对应代理骨架的上一帧缓存。"""
+    """Clear the cached previous palette for the active proxy armature."""
     proxy_armature = find_proxy_armature_for_object(active_object)
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
@@ -402,16 +344,11 @@ def clear_previous_palette_for_active_proxy(active_object):
 
 
 def dump_debug_for_proxy_armature(context, proxy_armature, binary_path="", segment="CURRENT"):
-    """把当前代理骨架的调试快照打印到控制台。"""
+    """Print a debug snapshot for one proxy armature."""
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
 
-    snapshot = build_proxy_debug_snapshot(
-        context,
-        proxy_armature,
-        binary_path=binary_path,
-        segment=segment,
-    )
+    snapshot = build_proxy_debug_snapshot(context, proxy_armature, binary_path=binary_path, segment=segment)
     print_debug_snapshot(snapshot)
     return DebugDumpResult(
         armature_name=proxy_armature.name,
@@ -421,7 +358,7 @@ def dump_debug_for_proxy_armature(context, proxy_armature, binary_path="", segme
 
 
 def dump_debug_for_active_proxy(context, active_object, binary_path="", segment="CURRENT"):
-    """为当前对象对应的代理骨架打印调试快照。"""
+    """Print a debug snapshot for the active proxy armature."""
     proxy_armature = find_proxy_armature_for_object(active_object)
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
