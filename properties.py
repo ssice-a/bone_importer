@@ -1,8 +1,8 @@
-"""Registration of Blender properties used by the addon."""
+"""注册插件在 Blender 中使用的属性。"""
 
 import bpy
 
-from .addon_constants import (
+from .constants import (
     DEFAULT_BUFFER_ROW_COUNT,
     DEFAULT_PART_ROW_COUNT,
     DEFAULT_PREVIOUS_FRAME_ROW_OFFSET,
@@ -17,6 +17,7 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.PoseBone, "bi_bind_matrix"),
     (bpy.types.PoseBone, "bi_bind_valid"),
     (bpy.types.Object, "bi_is_proxy_armature"),
+    (bpy.types.Object, "bi_part_id"),
     (bpy.types.Object, "bi_source_mesh_name"),
     (bpy.types.Object, "bi_proxy_armature_name"),
     (bpy.types.Object, "bi_part_base"),
@@ -31,7 +32,7 @@ REGISTERED_PROPERTY_PATHS = (
 
 
 def register_addon_properties():
-    """Register all Object, PoseBone, and Scene properties used by the addon."""
+    """注册插件需要的 Object、PoseBone 和 Scene 属性。"""
     bpy.types.PoseBone.bi_slot_id = bpy.props.IntProperty(
         name="Slot Id",
         default=-1,
@@ -78,6 +79,12 @@ def register_addon_properties():
         name="Is Proxy Armature",
         default=False,
         description="Marks this object as a generated VS-T0 proxy armature.",
+    )
+    bpy.types.Object.bi_part_id = bpy.props.IntProperty(
+        name="Part Id",
+        default=-1,
+        min=-1,
+        description="Part window id used to derive the VS-T0 buffer offset automatically.",
     )
     bpy.types.Object.bi_source_mesh_name = bpy.props.StringProperty(
         name="Source Mesh",
@@ -143,7 +150,7 @@ def register_addon_properties():
 
 
 def unregister_addon_properties():
-    """Unregister all Blender properties created by the addon."""
+    """卸载插件创建过的 Blender 属性。"""
     for owner, attribute_name in REGISTERED_PROPERTY_PATHS:
         if hasattr(owner, attribute_name):
             delattr(owner, attribute_name)

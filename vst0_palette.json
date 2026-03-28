@@ -1,0 +1,854 @@
+{
+  "format": "vs_t0_palette_v1",
+  "float4_buffer_size": 200000,
+  "reserved_rows": 3,
+  "rows_per_bone": 3,
+  "part_base": 0,
+  "part_size": 1000,
+  "previous_base": 100000,
+  "previous_offset": 100000,
+  "max_slot_capacity": 332,
+  "armature_name": "586b4574-123174-0.角_VST0Proxy",
+  "source_mesh": "586b4574-123174-0.角",
+  "frame": 1,
+  "coordinate_correction": "MATRIX_RX_90_DEG",
+  "exported_bones": [
+    {
+      "name": "0",
+      "slot_id": 0,
+      "bone_type": "MAIN",
+      "row_base": 3
+    },
+    {
+      "name": "1",
+      "slot_id": 1,
+      "bone_type": "MAIN",
+      "row_base": 6
+    },
+    {
+      "name": "2",
+      "slot_id": 2,
+      "bone_type": "MAIN",
+      "row_base": 9
+    },
+    {
+      "name": "3",
+      "slot_id": 3,
+      "bone_type": "MAIN",
+      "row_base": 12
+    },
+    {
+      "name": "4",
+      "slot_id": 4,
+      "bone_type": "MAIN",
+      "row_base": 15
+    },
+    {
+      "name": "5",
+      "slot_id": 5,
+      "bone_type": "MAIN",
+      "row_base": 18
+    },
+    {
+      "name": "6",
+      "slot_id": 6,
+      "bone_type": "MAIN",
+      "row_base": 21
+    },
+    {
+      "name": "7",
+      "slot_id": 7,
+      "bone_type": "MAIN",
+      "row_base": 24
+    },
+    {
+      "name": "8",
+      "slot_id": 8,
+      "bone_type": "MAIN",
+      "row_base": 27
+    },
+    {
+      "name": "9",
+      "slot_id": 9,
+      "bone_type": "MAIN",
+      "row_base": 30
+    },
+    {
+      "name": "10",
+      "slot_id": 10,
+      "bone_type": "MAIN",
+      "row_base": 33
+    },
+    {
+      "name": "11",
+      "slot_id": 11,
+      "bone_type": "MAIN",
+      "row_base": 36
+    },
+    {
+      "name": "12",
+      "slot_id": 12,
+      "bone_type": "MAIN",
+      "row_base": 39
+    },
+    {
+      "name": "13",
+      "slot_id": 13,
+      "bone_type": "MAIN",
+      "row_base": 42
+    },
+    {
+      "name": "14",
+      "slot_id": 14,
+      "bone_type": "MAIN",
+      "row_base": 45
+    },
+    {
+      "name": "15",
+      "slot_id": 15,
+      "bone_type": "MAIN",
+      "row_base": 48
+    },
+    {
+      "name": "16",
+      "slot_id": 16,
+      "bone_type": "MAIN",
+      "row_base": 51
+    },
+    {
+      "name": "17",
+      "slot_id": 17,
+      "bone_type": "MAIN",
+      "row_base": 54
+    },
+    {
+      "name": "18",
+      "slot_id": 18,
+      "bone_type": "MAIN",
+      "row_base": 57
+    },
+    {
+      "name": "19",
+      "slot_id": 19,
+      "bone_type": "MAIN",
+      "row_base": 60
+    },
+    {
+      "name": "20",
+      "slot_id": 20,
+      "bone_type": "MAIN",
+      "row_base": 63
+    },
+    {
+      "name": "21",
+      "slot_id": 21,
+      "bone_type": "MAIN",
+      "row_base": 66
+    },
+    {
+      "name": "22",
+      "slot_id": 22,
+      "bone_type": "MAIN",
+      "row_base": 69
+    },
+    {
+      "name": "23",
+      "slot_id": 23,
+      "bone_type": "MAIN",
+      "row_base": 72
+    },
+    {
+      "name": "24",
+      "slot_id": 24,
+      "bone_type": "MAIN",
+      "row_base": 75
+    },
+    {
+      "name": "25",
+      "slot_id": 25,
+      "bone_type": "MAIN",
+      "row_base": 78
+    },
+    {
+      "name": "26",
+      "slot_id": 26,
+      "bone_type": "MAIN",
+      "row_base": 81
+    },
+    {
+      "name": "27",
+      "slot_id": 27,
+      "bone_type": "MAIN",
+      "row_base": 84
+    },
+    {
+      "name": "28",
+      "slot_id": 28,
+      "bone_type": "MAIN",
+      "row_base": 87
+    },
+    {
+      "name": "29",
+      "slot_id": 29,
+      "bone_type": "MAIN",
+      "row_base": 90
+    },
+    {
+      "name": "30",
+      "slot_id": 30,
+      "bone_type": "MAIN",
+      "row_base": 93
+    },
+    {
+      "name": "31",
+      "slot_id": 31,
+      "bone_type": "MAIN",
+      "row_base": 96
+    },
+    {
+      "name": "32",
+      "slot_id": 32,
+      "bone_type": "MAIN",
+      "row_base": 99
+    },
+    {
+      "name": "33",
+      "slot_id": 33,
+      "bone_type": "MAIN",
+      "row_base": 102
+    },
+    {
+      "name": "34",
+      "slot_id": 34,
+      "bone_type": "MAIN",
+      "row_base": 105
+    },
+    {
+      "name": "35",
+      "slot_id": 35,
+      "bone_type": "MAIN",
+      "row_base": 108
+    },
+    {
+      "name": "36",
+      "slot_id": 36,
+      "bone_type": "MAIN",
+      "row_base": 111
+    },
+    {
+      "name": "37",
+      "slot_id": 37,
+      "bone_type": "MAIN",
+      "row_base": 114
+    },
+    {
+      "name": "38",
+      "slot_id": 38,
+      "bone_type": "MAIN",
+      "row_base": 117
+    },
+    {
+      "name": "39",
+      "slot_id": 39,
+      "bone_type": "MAIN",
+      "row_base": 120
+    },
+    {
+      "name": "40",
+      "slot_id": 40,
+      "bone_type": "MAIN",
+      "row_base": 123
+    },
+    {
+      "name": "41",
+      "slot_id": 41,
+      "bone_type": "MAIN",
+      "row_base": 126
+    },
+    {
+      "name": "42",
+      "slot_id": 42,
+      "bone_type": "MAIN",
+      "row_base": 129
+    },
+    {
+      "name": "43",
+      "slot_id": 43,
+      "bone_type": "MAIN",
+      "row_base": 132
+    },
+    {
+      "name": "44",
+      "slot_id": 44,
+      "bone_type": "MAIN",
+      "row_base": 135
+    },
+    {
+      "name": "45",
+      "slot_id": 45,
+      "bone_type": "MAIN",
+      "row_base": 138
+    },
+    {
+      "name": "46",
+      "slot_id": 46,
+      "bone_type": "MAIN",
+      "row_base": 141
+    },
+    {
+      "name": "47",
+      "slot_id": 47,
+      "bone_type": "MAIN",
+      "row_base": 144
+    },
+    {
+      "name": "48",
+      "slot_id": 48,
+      "bone_type": "MAIN",
+      "row_base": 147
+    },
+    {
+      "name": "49",
+      "slot_id": 49,
+      "bone_type": "MAIN",
+      "row_base": 150
+    },
+    {
+      "name": "50",
+      "slot_id": 50,
+      "bone_type": "MAIN",
+      "row_base": 153
+    },
+    {
+      "name": "51",
+      "slot_id": 51,
+      "bone_type": "MAIN",
+      "row_base": 156
+    },
+    {
+      "name": "52",
+      "slot_id": 52,
+      "bone_type": "MAIN",
+      "row_base": 159
+    },
+    {
+      "name": "53",
+      "slot_id": 53,
+      "bone_type": "MAIN",
+      "row_base": 162
+    },
+    {
+      "name": "54",
+      "slot_id": 54,
+      "bone_type": "MAIN",
+      "row_base": 165
+    },
+    {
+      "name": "55",
+      "slot_id": 55,
+      "bone_type": "MAIN",
+      "row_base": 168
+    },
+    {
+      "name": "56",
+      "slot_id": 56,
+      "bone_type": "MAIN",
+      "row_base": 171
+    },
+    {
+      "name": "57",
+      "slot_id": 57,
+      "bone_type": "MAIN",
+      "row_base": 174
+    },
+    {
+      "name": "58",
+      "slot_id": 58,
+      "bone_type": "MAIN",
+      "row_base": 177
+    },
+    {
+      "name": "59",
+      "slot_id": 59,
+      "bone_type": "MAIN",
+      "row_base": 180
+    },
+    {
+      "name": "60",
+      "slot_id": 60,
+      "bone_type": "MAIN",
+      "row_base": 183
+    },
+    {
+      "name": "61",
+      "slot_id": 61,
+      "bone_type": "MAIN",
+      "row_base": 186
+    },
+    {
+      "name": "62",
+      "slot_id": 62,
+      "bone_type": "MAIN",
+      "row_base": 189
+    },
+    {
+      "name": "63",
+      "slot_id": 63,
+      "bone_type": "MAIN",
+      "row_base": 192
+    },
+    {
+      "name": "64",
+      "slot_id": 64,
+      "bone_type": "MAIN",
+      "row_base": 195
+    },
+    {
+      "name": "65",
+      "slot_id": 65,
+      "bone_type": "MAIN",
+      "row_base": 198
+    },
+    {
+      "name": "66",
+      "slot_id": 66,
+      "bone_type": "MAIN",
+      "row_base": 201
+    },
+    {
+      "name": "67",
+      "slot_id": 67,
+      "bone_type": "MAIN",
+      "row_base": 204
+    },
+    {
+      "name": "68",
+      "slot_id": 68,
+      "bone_type": "MAIN",
+      "row_base": 207
+    },
+    {
+      "name": "69",
+      "slot_id": 69,
+      "bone_type": "MAIN",
+      "row_base": 210
+    },
+    {
+      "name": "70",
+      "slot_id": 70,
+      "bone_type": "MAIN",
+      "row_base": 213
+    },
+    {
+      "name": "71",
+      "slot_id": 71,
+      "bone_type": "MAIN",
+      "row_base": 216
+    },
+    {
+      "name": "72",
+      "slot_id": 72,
+      "bone_type": "MAIN",
+      "row_base": 219
+    },
+    {
+      "name": "73",
+      "slot_id": 73,
+      "bone_type": "MAIN",
+      "row_base": 222
+    },
+    {
+      "name": "74",
+      "slot_id": 74,
+      "bone_type": "MAIN",
+      "row_base": 225
+    },
+    {
+      "name": "75",
+      "slot_id": 75,
+      "bone_type": "MAIN",
+      "row_base": 228
+    },
+    {
+      "name": "76",
+      "slot_id": 76,
+      "bone_type": "MAIN",
+      "row_base": 231
+    },
+    {
+      "name": "77",
+      "slot_id": 77,
+      "bone_type": "MAIN",
+      "row_base": 234
+    },
+    {
+      "name": "78",
+      "slot_id": 78,
+      "bone_type": "MAIN",
+      "row_base": 237
+    },
+    {
+      "name": "79",
+      "slot_id": 79,
+      "bone_type": "MAIN",
+      "row_base": 240
+    },
+    {
+      "name": "80",
+      "slot_id": 80,
+      "bone_type": "MAIN",
+      "row_base": 243
+    },
+    {
+      "name": "81",
+      "slot_id": 81,
+      "bone_type": "MAIN",
+      "row_base": 246
+    },
+    {
+      "name": "82",
+      "slot_id": 82,
+      "bone_type": "MAIN",
+      "row_base": 249
+    },
+    {
+      "name": "83",
+      "slot_id": 83,
+      "bone_type": "MAIN",
+      "row_base": 252
+    },
+    {
+      "name": "84",
+      "slot_id": 84,
+      "bone_type": "MAIN",
+      "row_base": 255
+    },
+    {
+      "name": "85",
+      "slot_id": 85,
+      "bone_type": "MAIN",
+      "row_base": 258
+    },
+    {
+      "name": "86",
+      "slot_id": 86,
+      "bone_type": "MAIN",
+      "row_base": 261
+    },
+    {
+      "name": "87",
+      "slot_id": 87,
+      "bone_type": "MAIN",
+      "row_base": 264
+    },
+    {
+      "name": "88",
+      "slot_id": 88,
+      "bone_type": "MAIN",
+      "row_base": 267
+    },
+    {
+      "name": "89",
+      "slot_id": 89,
+      "bone_type": "MAIN",
+      "row_base": 270
+    },
+    {
+      "name": "90",
+      "slot_id": 90,
+      "bone_type": "MAIN",
+      "row_base": 273
+    },
+    {
+      "name": "91",
+      "slot_id": 91,
+      "bone_type": "MAIN",
+      "row_base": 276
+    },
+    {
+      "name": "92",
+      "slot_id": 92,
+      "bone_type": "MAIN",
+      "row_base": 279
+    },
+    {
+      "name": "93",
+      "slot_id": 93,
+      "bone_type": "MAIN",
+      "row_base": 282
+    },
+    {
+      "name": "94",
+      "slot_id": 94,
+      "bone_type": "MAIN",
+      "row_base": 285
+    },
+    {
+      "name": "95",
+      "slot_id": 95,
+      "bone_type": "MAIN",
+      "row_base": 288
+    },
+    {
+      "name": "96",
+      "slot_id": 96,
+      "bone_type": "MAIN",
+      "row_base": 291
+    },
+    {
+      "name": "97",
+      "slot_id": 97,
+      "bone_type": "MAIN",
+      "row_base": 294
+    },
+    {
+      "name": "98",
+      "slot_id": 98,
+      "bone_type": "MAIN",
+      "row_base": 297
+    },
+    {
+      "name": "99",
+      "slot_id": 99,
+      "bone_type": "MAIN",
+      "row_base": 300
+    },
+    {
+      "name": "100",
+      "slot_id": 100,
+      "bone_type": "MAIN",
+      "row_base": 303
+    },
+    {
+      "name": "101",
+      "slot_id": 101,
+      "bone_type": "MAIN",
+      "row_base": 306
+    },
+    {
+      "name": "102",
+      "slot_id": 102,
+      "bone_type": "MAIN",
+      "row_base": 309
+    },
+    {
+      "name": "103",
+      "slot_id": 103,
+      "bone_type": "MAIN",
+      "row_base": 312
+    },
+    {
+      "name": "104",
+      "slot_id": 104,
+      "bone_type": "MAIN",
+      "row_base": 315
+    },
+    {
+      "name": "105",
+      "slot_id": 105,
+      "bone_type": "MAIN",
+      "row_base": 318
+    },
+    {
+      "name": "106",
+      "slot_id": 106,
+      "bone_type": "MAIN",
+      "row_base": 321
+    },
+    {
+      "name": "107",
+      "slot_id": 107,
+      "bone_type": "MAIN",
+      "row_base": 324
+    },
+    {
+      "name": "108",
+      "slot_id": 108,
+      "bone_type": "MAIN",
+      "row_base": 327
+    },
+    {
+      "name": "109",
+      "slot_id": 109,
+      "bone_type": "MAIN",
+      "row_base": 330
+    },
+    {
+      "name": "110",
+      "slot_id": 110,
+      "bone_type": "MAIN",
+      "row_base": 333
+    },
+    {
+      "name": "111",
+      "slot_id": 111,
+      "bone_type": "MAIN",
+      "row_base": 336
+    },
+    {
+      "name": "112",
+      "slot_id": 112,
+      "bone_type": "MAIN",
+      "row_base": 339
+    },
+    {
+      "name": "113",
+      "slot_id": 113,
+      "bone_type": "MAIN",
+      "row_base": 342
+    },
+    {
+      "name": "114",
+      "slot_id": 114,
+      "bone_type": "MAIN",
+      "row_base": 345
+    },
+    {
+      "name": "115",
+      "slot_id": 115,
+      "bone_type": "MAIN",
+      "row_base": 348
+    },
+    {
+      "name": "116",
+      "slot_id": 116,
+      "bone_type": "MAIN",
+      "row_base": 351
+    },
+    {
+      "name": "117",
+      "slot_id": 117,
+      "bone_type": "MAIN",
+      "row_base": 354
+    },
+    {
+      "name": "118",
+      "slot_id": 118,
+      "bone_type": "MAIN",
+      "row_base": 357
+    }
+  ],
+  "used_slots": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118
+  ],
+  "overflow_bones": [],
+  "bind_fallback_bones": []
+}

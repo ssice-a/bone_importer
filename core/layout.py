@@ -1,18 +1,18 @@
-"""Helpers for VS-T0 palette row layout and matrix packing."""
+"""处理 VS-T0 调色板布局和矩阵打包格式的辅助函数。"""
 
 from mathutils import Matrix
 
-from ..addon_constants import RESERVED_PALETTE_ROWS
+from ..constants import RESERVED_PALETTE_ROWS
 
 
 def calculate_slot_capacity_for_part_size(part_row_count):
-    """Return how many 3-row bones fit inside a part window after reserved rows."""
+    """计算一个部位窗口在扣除保留行后还能容纳多少根骨骼。"""
     part_row_count = max(int(part_row_count), RESERVED_PALETTE_ROWS)
     return max(0, (part_row_count - RESERVED_PALETTE_ROWS) // 3)
 
 
 def build_identity_rows(row_count):
-    """Build a list of identity-style float4 rows long enough to fill a buffer segment."""
+    """生成足够长的单位矩阵行列表，用来初始化缓冲区片段。"""
     rows = []
     while len(rows) < row_count:
         rows.extend(
@@ -26,22 +26,22 @@ def build_identity_rows(row_count):
 
 
 def build_empty_palette_segment(part_row_count):
-    """Create a fresh palette segment initialized to identity rows."""
+    """创建一个新的片段，并用单位矩阵行初始化。"""
     return build_identity_rows(part_row_count)
 
 
 def build_identity_buffer_rows(buffer_row_count):
-    """Create a full float4 buffer initialized with identity rows."""
+    """创建完整缓冲区，并用单位矩阵行初始化。"""
     return build_identity_rows(buffer_row_count)
 
 
 def flatten_matrix_to_list(matrix):
-    """Flatten a 4x4 matrix into a 16-value row-major list for Blender properties."""
+    """把 4x4 矩阵拍平成 16 个值，便于写入 Blender 属性。"""
     return [matrix[row][column] for row in range(4) for column in range(4)]
 
 
 def build_matrix_from_flat_values(values):
-    """Build a 4x4 Matrix from a flat 16-value row-major list."""
+    """把 16 个拍平的值还原成 4x4 矩阵。"""
     if not values or len(values) != 16:
         return Matrix.Identity(4)
     return Matrix(
@@ -55,7 +55,7 @@ def build_matrix_from_flat_values(values):
 
 
 def build_matrix_from_palette_rows(rows):
-    """Rebuild a 4x4 matrix from the three VS-T0 float4 rows stored for one bone."""
+    """把 VS-T0 中一根骨骼的 3 行 float4 还原成 4x4 矩阵。"""
     if not rows or len(rows) != 3:
         return Matrix.Identity(4)
     first_row, second_row, third_row = rows
@@ -70,7 +70,7 @@ def build_matrix_from_palette_rows(rows):
 
 
 def convert_matrix_to_palette_rows(matrix):
-    """Convert a 4x4 matrix into the three float4 rows expected by VS-T0."""
+    """把 4x4 矩阵转换成 VS-T0 需要的 3 行 float4。"""
     return [
         (float(matrix[0][0]), float(matrix[0][1]), float(matrix[0][2]), float(matrix[0][3])),
         (float(matrix[1][0]), float(matrix[1][1]), float(matrix[1][2]), float(matrix[1][3])),
