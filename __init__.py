@@ -6,7 +6,7 @@ bl_info = {
     "version": (0, 6, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Bone Importer",
-    "description": "Generate VS-T0 proxy bones and import/export static palettes or sparse animation clips.",
+    "description": "Generate VS-T0 proxy bones and import/export palette patches or frame-range runtime buffer pairs.",
     "category": "Animation",
 }
 

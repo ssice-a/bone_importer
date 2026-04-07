@@ -77,19 +77,21 @@ class PaletteImportResult:
 
 @dataclass(frozen=True)
 class AnimationExportResult:
-    """Summary of exporting one sparse animation clip."""
+    """Summary of exporting one dense animation buffer pair."""
 
     armature_name: str
-    binary_path: str
-    metadata_path: str
+    rows_path: str
+    meta_path: str
     frame_count: int
+    slot_count: int
     exported_bones: int
     metadata: dict
+    debug_metadata_path: str = ""
 
 
 @dataclass(frozen=True)
 class BatchAnimationExportResult:
-    """Summary of exporting animation clips for multiple proxy rigs."""
+    """Summary of exporting dense animation buffers for multiple proxy rigs."""
 
     output_directory: str
     selected_armatures: int

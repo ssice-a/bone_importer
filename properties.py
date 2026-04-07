@@ -136,29 +136,29 @@ def register_addon_properties():
         name="Animation Dir",
         default="//animation_clips",
         subtype="DIR_PATH",
-        description="Directory used to export one sparse animation clip per selected proxy armature.",
+        description="Directory used to export dense runtime buffers for the selected frame range.",
     )
     bpy.types.Scene.bi_animation_frame_start = bpy.props.IntProperty(
         name="Frame Start",
         default=1,
-        description="First frame exported into animation clips.",
+        description="First frame sampled into the exported runtime buffers. Set it equal to Frame End to export one frame.",
     )
     bpy.types.Scene.bi_animation_frame_end = bpy.props.IntProperty(
         name="Frame End",
         default=250,
-        description="Last frame exported into animation clips.",
+        description="Last frame sampled into the exported runtime buffers.",
     )
     bpy.types.Scene.bi_animation_frame_step = bpy.props.IntProperty(
         name="Frame Step",
         default=1,
         min=1,
-        description="Frame step used while sampling animation clips.",
+        description="Frame step used while sampling the runtime buffers.",
     )
     bpy.types.Scene.bi_animation_fps = bpy.props.FloatProperty(
         name="FPS",
         default=60.0,
         min=1.0,
-        description="Playback FPS stored into exported animation metadata.",
+        description="Playback FPS written into the optional debug metadata JSON for the exported frame range.",
     )
     bpy.types.Scene.bi_import_path = bpy.props.StringProperty(
         name="Import Path",

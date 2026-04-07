@@ -294,7 +294,7 @@ def export_animation_for_proxy_armatures(
     fps,
     write_metadata=True,
 ):
-    """Export one sparse animation clip per proxy armature."""
+    """Export one dense animation buffer pair per proxy armature."""
     normalized_armatures = tuple(proxy_armatures)
     if not normalized_armatures:
         raise ValueError("No proxy armatures to export")
@@ -326,7 +326,9 @@ def export_animation_for_proxy_armatures(
             exported_armatures += 1
             total_frames += result.frame_count
             total_exported_bones += result.exported_bones
-            exported_files += [result.binary_path, result.metadata_path]
+            exported_files += [result.rows_path, result.meta_path]
+            if result.debug_metadata_path:
+                exported_files.append(result.debug_metadata_path)
     finally:
         restore_selection_state(context, selection_state)
 
@@ -350,7 +352,7 @@ def export_animation_for_selected_proxy_armatures(
     fps,
     write_metadata=True,
 ):
-    """Export sparse animation clips for the current target proxy armature set."""
+    """Export dense animation buffers for the current target proxy armature set."""
     return export_animation_for_proxy_armatures(
         context,
         build_target_proxy_armatures(context),

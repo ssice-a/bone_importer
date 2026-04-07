@@ -75,7 +75,8 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
             bind_row.operator("object.bi_clear_previous_cache", icon="TRASH")
 
         static_box = workflow_box.box()
-        static_box.label(text="Static Palette", icon="EXPORT")
+        static_box.label(text="Palette Roundtrip", icon="EXPORT")
+        static_box.label(text="Use this path for VS-T0 patch import/export.", icon="INFO")
         static_box.prop(scene, "bi_output_path")
         static_box.prop(scene, "bi_write_metadata")
         static_button_row = static_box.row(align=True)
@@ -89,7 +90,8 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         static_box.prop(scene, "bi_import_segment")
 
         animation_box = workflow_box.box()
-        animation_box.label(text="Animation Export", icon="ACTION")
+        animation_box.label(text="Runtime Buffer Export", icon="ACTION")
+        animation_box.label(text="Set Start = End to export one static frame.", icon="INFO")
         animation_box.prop(scene, "bi_animation_output_dir")
         frame_row = animation_box.row(align=True)
         frame_row.prop(scene, "bi_animation_frame_start")

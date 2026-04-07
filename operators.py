@@ -163,8 +163,10 @@ class BI_OT_export_animation(bpy.types.Operator):
     """导出稀疏多帧动画 clip。"""
 
     bl_idname = "object.bi_export_animation"
-    bl_label = "Export Animation"
-    bl_description = "Export one sparse multi-frame clip per selected proxy armature"
+    bl_label = "Export Runtime Buffers"
+    bl_description = (
+        "Export dense runtime buffers for the selected frame range; set frame start equal to frame end to export one frame"
+    )
     bl_options = {"REGISTER"}
 
     @classmethod
@@ -194,10 +196,16 @@ class BI_OT_export_animation(bpy.types.Operator):
             self.report({"ERROR"}, f"Animation export failed: {exc}")
             return {"CANCELLED"}
 
-        message = (
-            f"Exported {result.exported_armatures}/{result.selected_armatures} clip(s)"
-            f"; total frames {result.total_frames}; total bones {result.total_exported_bones}"
-        )
+        if scene.bi_animation_frame_start == scene.bi_animation_frame_end:
+            message = (
+                f"Exported {result.exported_armatures}/{result.selected_armatures} single-frame buffer pair(s)"
+                f"; total bones {result.total_exported_bones}"
+            )
+        else:
+            message = (
+                f"Exported {result.exported_armatures}/{result.selected_armatures} frame-range buffer pair(s)"
+                f"; total frames {result.total_frames}; total bones {result.total_exported_bones}"
+            )
         self.report({"INFO"}, message)
         if result.failed_armatures:
             self.report({"WARNING"}, "; ".join(result.failed_armatures))
