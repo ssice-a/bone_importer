@@ -1,5 +1,7 @@
-"""Bone Importer 的核心可复用接口。"""
+"""Bone Importer 核心层对外暴露的可复用接口。"""
 
+from .animation_export import export_animation_clip_for_proxy_armature
+from .bind import refresh_bind_for_proxy_armature
 from .context import (
     apply_part_id_layout,
     build_part_layout_from_id,
@@ -7,13 +9,15 @@ from .context import (
     ensure_mesh_parented_to_proxy_armature,
     find_proxy_armature_for_object,
     find_source_mesh_for_object,
+    list_directly_selected_proxy_armatures,
     list_selected_proxy_armatures,
     make_object_active,
     restore_selection_state,
 )
 from .debug import build_proxy_debug_snapshot, print_debug_snapshot
 from .export import (
-    build_palette_export_package,
+    build_palette_export_patch,
+    build_palette_export_write_plan_for_proxy_armatures,
     cache_current_palette_segment,
     clear_previous_palette_cache,
     list_exportable_proxy_pose_bones,
@@ -24,6 +28,7 @@ from .io import (
     load_palette_file,
     read_palette_metadata_from_file,
     write_palette_package_to_disk,
+    write_palette_row_patches_to_disk,
 )
 from .layout import (
     build_identity_buffer_rows,
@@ -34,10 +39,13 @@ from .layout import (
     flatten_matrix_to_list,
 )
 from .models import (
+    AnimationExportResult,
+    BatchAnimationExportResult,
+    BatchBindRefreshResult,
+    BatchPaletteExportResult,
     BatchPaletteImportResult,
     BatchProxyRigGenerationResult,
     DebugDumpResult,
-    PaletteExportResult,
     PaletteImportResult,
     ProxyBindCaptureResult,
     ProxyRigGenerationResult,
@@ -55,14 +63,17 @@ from .proxy import (
 )
 from .transform import convert_matrix_from_blender_to_game, convert_matrix_from_game_to_blender
 from .workflow import (
-    capture_bind_for_active_proxy,
     clear_previous_palette_for_active_proxy,
     dump_debug_for_active_proxy,
+    export_animation_for_selected_proxy_armatures,
     export_palette_for_active_proxy,
+    export_palette_for_selected_proxy_armatures,
     generate_proxy_rig_for_mesh,
     generate_proxy_rig_from_active_mesh,
     generate_proxy_rigs_from_selected_meshes,
     import_palette_for_active_proxy,
     import_palette_for_proxy_armature,
     import_palette_for_selected_proxy_armatures,
+    refresh_bind_for_active_proxy,
+    refresh_bind_for_selected_proxy_armatures,
 )

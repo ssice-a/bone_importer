@@ -1,11 +1,11 @@
-"""在各模块之间传递结果时使用的数据模型。"""
+"""Data models shared across the plugin."""
 
 from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
 class ProxyRigGenerationResult:
-    """代理骨架生成结果摘要。"""
+    """Summary of generating one proxy rig."""
 
     source_mesh_name: str
     armature_name: str
@@ -18,7 +18,7 @@ class ProxyRigGenerationResult:
 
 @dataclass(frozen=True)
 class ProxyBindCaptureResult:
-    """Bind 捕获结果摘要。"""
+    """Summary of refreshing bind matrices for one proxy rig."""
 
     armature_name: str
     captured_bones: int
@@ -26,8 +26,18 @@ class ProxyBindCaptureResult:
 
 
 @dataclass(frozen=True)
+class BatchBindRefreshResult:
+    """Summary of refreshing bind matrices for multiple proxy rigs."""
+
+    selected_armatures: int
+    refreshed_armatures: int
+    refreshed_bones: int
+    failed_armatures: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
 class PaletteExportResult:
-    """调色板导出到磁盘后的结果。"""
+    """Summary of exporting one static palette file."""
 
     armature_name: str
     binary_path: str
@@ -40,7 +50,7 @@ class PaletteExportResult:
 
 @dataclass(frozen=True)
 class BatchPaletteExportResult:
-    """把多个已选代理骨架导出并合并到同一份大缓冲后的结果摘要。"""
+    """Summary of exporting one or more static palette parts."""
 
     binary_path: str
     metadata_path: str
@@ -54,7 +64,7 @@ class BatchPaletteExportResult:
 
 @dataclass(frozen=True)
 class PaletteImportResult:
-    """把调色板导入到代理骨架后的结果。"""
+    """Summary of importing one static palette segment."""
 
     armature_name: str
     binary_path: str
@@ -66,8 +76,33 @@ class PaletteImportResult:
 
 
 @dataclass(frozen=True)
+class AnimationExportResult:
+    """Summary of exporting one sparse animation clip."""
+
+    armature_name: str
+    binary_path: str
+    metadata_path: str
+    frame_count: int
+    exported_bones: int
+    metadata: dict
+
+
+@dataclass(frozen=True)
+class BatchAnimationExportResult:
+    """Summary of exporting animation clips for multiple proxy rigs."""
+
+    output_directory: str
+    selected_armatures: int
+    exported_armatures: int
+    total_frames: int
+    total_exported_bones: int
+    failed_armatures: tuple[str, ...] = field(default_factory=tuple)
+    exported_files: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
 class BatchProxyRigGenerationResult:
-    """批量生成多个代理骨架后的结果摘要。"""
+    """Summary of generating multiple proxy rigs."""
 
     generated_meshes: int
     generated_armatures: int
@@ -78,7 +113,7 @@ class BatchProxyRigGenerationResult:
 
 @dataclass(frozen=True)
 class BatchPaletteImportResult:
-    """把同一份调色板导入到多个已选骨架后的结果摘要。"""
+    """Summary of importing one palette into multiple proxy rigs."""
 
     binary_path: str
     selected_armatures: int
@@ -89,7 +124,7 @@ class BatchPaletteImportResult:
 
 @dataclass(frozen=True)
 class LoadedPaletteFile:
-    """从磁盘读取到的调色板数据和可选元数据。"""
+    """Palette rows loaded from disk."""
 
     binary_path: str
     rows: list[tuple[float, float, float, float]]
@@ -99,7 +134,7 @@ class LoadedPaletteFile:
 
 @dataclass(frozen=True)
 class DebugDumpResult:
-    """导出调试快照后的结果摘要。"""
+    """Summary of a console debug dump."""
 
     armature_name: str
     sampled_bones: int

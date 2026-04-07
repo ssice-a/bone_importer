@@ -25,6 +25,11 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_previous_offset"),
     (bpy.types.Object, "bi_buffer_size"),
     (bpy.types.Scene, "bi_output_path"),
+    (bpy.types.Scene, "bi_animation_output_dir"),
+    (bpy.types.Scene, "bi_animation_frame_start"),
+    (bpy.types.Scene, "bi_animation_frame_end"),
+    (bpy.types.Scene, "bi_animation_frame_step"),
+    (bpy.types.Scene, "bi_animation_fps"),
     (bpy.types.Scene, "bi_import_path"),
     (bpy.types.Scene, "bi_import_segment"),
     (bpy.types.Scene, "bi_write_metadata"),
@@ -126,6 +131,34 @@ def register_addon_properties():
         default="//vst0_palette.bin",
         subtype="FILE_PATH",
         description="Binary output path for the exported VS-T0 palette.",
+    )
+    bpy.types.Scene.bi_animation_output_dir = bpy.props.StringProperty(
+        name="Animation Dir",
+        default="//animation_clips",
+        subtype="DIR_PATH",
+        description="Directory used to export one sparse animation clip per selected proxy armature.",
+    )
+    bpy.types.Scene.bi_animation_frame_start = bpy.props.IntProperty(
+        name="Frame Start",
+        default=1,
+        description="First frame exported into animation clips.",
+    )
+    bpy.types.Scene.bi_animation_frame_end = bpy.props.IntProperty(
+        name="Frame End",
+        default=250,
+        description="Last frame exported into animation clips.",
+    )
+    bpy.types.Scene.bi_animation_frame_step = bpy.props.IntProperty(
+        name="Frame Step",
+        default=1,
+        min=1,
+        description="Frame step used while sampling animation clips.",
+    )
+    bpy.types.Scene.bi_animation_fps = bpy.props.FloatProperty(
+        name="FPS",
+        default=60.0,
+        min=1.0,
+        description="Playback FPS stored into exported animation metadata.",
     )
     bpy.types.Scene.bi_import_path = bpy.props.StringProperty(
         name="Import Path",

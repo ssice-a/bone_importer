@@ -3,6 +3,8 @@
 import bpy
 
 from ..constants import DEFAULT_PART_ROW_COUNT
+from .animation_export import export_animation_clip_for_proxy_armature
+from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
 from .context import (
     apply_part_id_layout,
     capture_selection_state,
@@ -29,11 +31,12 @@ from .io import (
 )
 from .layout import calculate_slot_capacity_for_part_size
 from .models import (
+    BatchAnimationExportResult,
+    BatchBindRefreshResult,
     BatchPaletteExportResult,
     BatchPaletteImportResult,
     BatchProxyRigGenerationResult,
     DebugDumpResult,
-    PaletteExportResult,
     PaletteImportResult,
     ProxyBindCaptureResult,
     ProxyRigGenerationResult,
@@ -149,35 +152,8 @@ def generate_proxy_rigs_from_selected_meshes(context):
     )
 
 
-def capture_bind_for_proxy_armature(proxy_armature):
-    """Capture bind matrices for one proxy armature."""
-    if proxy_armature is None:
-        raise ValueError("No proxy armature found")
-
-    source_mesh = prepare_proxy_armature(proxy_armature, require_part_id=False)
-    captured_bone_count = capture_proxy_bind_matrices(proxy_armature)
-    clear_previous_palette_cache(proxy_armature)
-
-    other_armature_modifiers = ()
-    if source_mesh is not None:
-        other_armature_modifiers = list_other_armature_modifier_names(source_mesh, proxy_armature)
-    return ProxyBindCaptureResult(
-        armature_name=proxy_armature.name,
-        captured_bones=captured_bone_count,
-        other_armature_modifiers=other_armature_modifiers,
-    )
-
-
-def capture_bind_for_active_proxy(active_object):
-    """Capture bind matrices for the active proxy armature."""
-    proxy_armature = find_proxy_armature_for_object(active_object)
-    if proxy_armature is None:
-        raise ValueError("No proxy armature found")
-    return capture_bind_for_proxy_armature(proxy_armature)
-
-
-def build_export_target_proxy_armatures(context):
-    """Resolve which proxy armatures should be exported."""
+def build_target_proxy_armatures(context):
+    """Resolve target proxy armatures from direct selection first, then active object."""
     directly_selected_armatures = list_directly_selected_proxy_armatures(context)
     if len(directly_selected_armatures) > 1:
         return directly_selected_armatures
@@ -193,14 +169,67 @@ def build_export_target_proxy_armatures(context):
     raise ValueError("No selected proxy armatures with Part Id found")
 
 
+def refresh_bind_for_proxy_armature(proxy_armature):
+    """Refresh bind matrices for one proxy armature."""
+    if proxy_armature is None:
+        raise ValueError("No proxy armature found")
+
+    source_mesh = prepare_proxy_armature(proxy_armature, require_part_id=False)
+    captured_bones = capture_bind_for_proxy_armature_internal(proxy_armature)
+    other_armature_modifiers = ()
+    if source_mesh is not None:
+        other_armature_modifiers = list_other_armature_modifier_names(source_mesh, proxy_armature)
+    return ProxyBindCaptureResult(
+        armature_name=proxy_armature.name,
+        captured_bones=captured_bones,
+        other_armature_modifiers=other_armature_modifiers,
+    )
+
+
+def refresh_bind_for_active_proxy(active_object):
+    """Refresh bind matrices for the active proxy armature."""
+    proxy_armature = find_proxy_armature_for_object(active_object)
+    if proxy_armature is None:
+        raise ValueError("No proxy armature found")
+    return refresh_bind_for_proxy_armature(proxy_armature)
+
+
+def refresh_bind_for_selected_proxy_armatures(context):
+    """Refresh bind matrices for the current target proxy armature set."""
+    target_armatures = build_target_proxy_armatures(context)
+    selection_state = capture_selection_state(context)
+    refreshed_armatures = 0
+    refreshed_bones = 0
+    failed_armatures = []
+
+    try:
+        for proxy_armature in target_armatures:
+            try:
+                result = refresh_bind_for_proxy_armature(proxy_armature)
+            except Exception as exc:
+                failed_armatures.append(f"{proxy_armature.name}: {exc}")
+                continue
+
+            refreshed_armatures += 1
+            refreshed_bones += result.captured_bones
+    finally:
+        restore_selection_state(context, selection_state)
+
+    return BatchBindRefreshResult(
+        selected_armatures=len(target_armatures),
+        refreshed_armatures=refreshed_armatures,
+        refreshed_bones=refreshed_bones,
+        failed_armatures=tuple(failed_armatures),
+    )
+
+
 def export_palette_for_proxy_armatures(context, proxy_armatures, output_path, write_metadata=True):
-    """Export one or more proxy armatures into a single buffer file."""
+    """Export one or more proxy armatures into a single static buffer file."""
     normalized_armatures = tuple(proxy_armatures)
     if not normalized_armatures:
         raise ValueError("No proxy armatures to export")
 
     selection_state = capture_selection_state(context)
-
     try:
         for proxy_armature in normalized_armatures:
             prepare_proxy_armature(proxy_armature, require_part_id=True)
@@ -233,17 +262,17 @@ def export_palette_for_proxy_armatures(context, proxy_armatures, output_path, wr
 
 
 def export_palette_for_selected_proxy_armatures(context, output_path, write_metadata=True):
-    """Export the current target proxy armature set."""
+    """Export the current target proxy armature set as a static palette file."""
     return export_palette_for_proxy_armatures(
         context,
-        build_export_target_proxy_armatures(context),
+        build_target_proxy_armatures(context),
         output_path,
         write_metadata,
     )
 
 
 def export_palette_for_proxy_armature(proxy_armature, output_path, write_metadata=True):
-    """Compatibility wrapper for exporting one proxy armature."""
+    """Compatibility wrapper for exporting one static palette."""
     return export_palette_for_proxy_armatures(bpy.context, (proxy_armature,), output_path, write_metadata)
 
 
@@ -253,6 +282,85 @@ def export_palette_for_active_proxy(active_object, output_path, write_metadata=T
     if proxy_armature is None:
         raise ValueError("No proxy armature found")
     return export_palette_for_proxy_armature(proxy_armature, output_path, write_metadata)
+
+
+def export_animation_for_proxy_armatures(
+    context,
+    proxy_armatures,
+    output_directory,
+    frame_start,
+    frame_end,
+    frame_step,
+    fps,
+    write_metadata=True,
+):
+    """Export one sparse animation clip per proxy armature."""
+    normalized_armatures = tuple(proxy_armatures)
+    if not normalized_armatures:
+        raise ValueError("No proxy armatures to export")
+
+    selection_state = capture_selection_state(context)
+    exported_armatures = 0
+    total_frames = 0
+    total_exported_bones = 0
+    failed_armatures = []
+    exported_files = []
+
+    try:
+        for proxy_armature in normalized_armatures:
+            try:
+                prepare_proxy_armature(proxy_armature, require_part_id=True)
+                result = export_animation_clip_for_proxy_armature(
+                    proxy_armature=proxy_armature,
+                    output_directory=output_directory,
+                    frame_start=frame_start,
+                    frame_end=frame_end,
+                    frame_step=frame_step,
+                    fps=fps,
+                    write_metadata=write_metadata,
+                )
+            except Exception as exc:
+                failed_armatures.append(f"{proxy_armature.name}: {exc}")
+                continue
+
+            exported_armatures += 1
+            total_frames += result.frame_count
+            total_exported_bones += result.exported_bones
+            exported_files += [result.binary_path, result.metadata_path]
+    finally:
+        restore_selection_state(context, selection_state)
+
+    return BatchAnimationExportResult(
+        output_directory=bpy.path.abspath(output_directory or "//"),
+        selected_armatures=len(normalized_armatures),
+        exported_armatures=exported_armatures,
+        total_frames=total_frames,
+        total_exported_bones=total_exported_bones,
+        failed_armatures=tuple(failed_armatures),
+        exported_files=tuple(exported_files),
+    )
+
+
+def export_animation_for_selected_proxy_armatures(
+    context,
+    output_directory,
+    frame_start,
+    frame_end,
+    frame_step,
+    fps,
+    write_metadata=True,
+):
+    """Export sparse animation clips for the current target proxy armature set."""
+    return export_animation_for_proxy_armatures(
+        context,
+        build_target_proxy_armatures(context),
+        output_directory,
+        frame_start,
+        frame_end,
+        frame_step,
+        fps,
+        write_metadata,
+    )
 
 
 def import_palette_for_proxy_armature(context, proxy_armature, binary_path, segment="CURRENT"):
@@ -289,8 +397,13 @@ def import_palette_for_proxy_armature(context, proxy_armature, binary_path, segm
         missing_rows=import_result.missing_rows,
         segment=import_result.segment,
         metadata=import_result.metadata,
-        other_armature_modifiers=list_other_armature_modifier_names(source_mesh, proxy_armature),
+        other_armature_modifiers=list_other_armature_mod_names(source_mesh, proxy_armature),
     )
+
+
+def list_other_armature_mod_names(source_mesh, proxy_armature):
+    """Small wrapper to keep import/export call sites compact."""
+    return list_other_armature_modifier_names(source_mesh, proxy_armature)
 
 
 def import_palette_for_active_proxy(context, active_object, binary_path, segment="CURRENT"):

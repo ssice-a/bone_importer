@@ -1,24 +1,27 @@
-"""Blender 操作器入口，尽量只做参数收集和流程转发。"""
+"""Blender 操作器入口。"""
 
 import bpy
 
 from .core.context import find_proxy_armature_for_object, list_selected_proxy_armatures
 from .core.workflow import (
-    capture_bind_for_active_proxy,
     clear_previous_palette_for_active_proxy,
     dump_debug_for_active_proxy,
+    export_animation_for_selected_proxy_armatures,
     export_palette_for_selected_proxy_armatures,
     generate_proxy_rig_from_active_mesh,
     generate_proxy_rigs_from_selected_meshes,
     import_palette_for_active_proxy,
     import_palette_for_selected_proxy_armatures,
+    refresh_bind_for_selected_proxy_armatures,
 )
 
 
 class BI_OT_generate_proxy_rig(bpy.types.Operator):
+    """为选中的网格生成代理骨架。"""
+
     bl_idname = "object.bi_generate_proxy_rig"
     bl_label = "Generate Proxy Rig"
-    bl_description = "Generate a vertical VS-T0 proxy armature from numeric mesh vertex groups"
+    bl_description = "Generate a VS-T0 proxy armature from numeric mesh vertex groups"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -80,37 +83,46 @@ class BI_OT_generate_proxy_rig(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class BI_OT_capture_bind(bpy.types.Operator):
-    bl_idname = "object.bi_capture_bind"
-    bl_label = "Capture Bind"
-    bl_description = "Capture bind matrices from the current proxy armature"
+class BI_OT_refresh_bind(bpy.types.Operator):
+    """刷新当前选中代理骨架的 bind 矩阵。"""
+
+    bl_idname = "object.bi_refresh_bind"
+    bl_label = "Refresh Bind"
+    bl_description = "Capture the current proxy armature rest state as the new bind"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
-        return find_proxy_armature_for_object(context.active_object) is not None
+        if find_proxy_armature_for_object(context.active_object) is not None:
+            return True
+        return bool(list_selected_proxy_armatures(context))
 
     def execute(self, context):
         try:
-            result = capture_bind_for_active_proxy(context.active_object)
+            result = refresh_bind_for_selected_proxy_armatures(context)
         except ValueError as exc:
-            self.report({"WARNING"}, str(exc))
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, f"Refresh bind failed: {exc}")
             return {"CANCELLED"}
 
-        self.report({"INFO"}, f"Captured bind matrices for {result.captured_bones} proxy bones")
-        if result.other_armature_modifiers:
-            modifier_names = ", ".join(result.other_armature_modifiers)
-            self.report(
-                {"WARNING"},
-                f"Other armature modifiers are still active on the source mesh: {modifier_names}.",
-            )
+        message = (
+            f"Refreshed bind for {result.refreshed_armatures}/{result.selected_armatures} armatures"
+            f"; captured {result.refreshed_bones} bones"
+        )
+        self.report({"INFO"}, message)
+        if result.failed_armatures:
+            self.report({"WARNING"}, "; ".join(result.failed_armatures))
         return {"FINISHED"}
 
 
 class BI_OT_export_palette(bpy.types.Operator):
+    """导出当前静态姿态到 VS-T0 工作缓冲。"""
+
     bl_idname = "object.bi_export_palette"
     bl_label = "Export Palette"
-    bl_description = "Export a VS-T0-compatible palette buffer with current and previous windows"
+    bl_description = "Export current VS-T0-compatible palette rows for the selected proxy armatures"
     bl_options = {"REGISTER"}
 
     @classmethod
@@ -137,7 +149,7 @@ class BI_OT_export_palette(bpy.types.Operator):
 
         message = (
             f"Exported {result.exported_bones} bones from {result.exported_armatures}"
-            f"/{result.selected_armatures} selected armatures to {result.binary_path}"
+            f"/{result.selected_armatures} armatures to {result.binary_path}"
         )
         if result.overflow_bones:
             message += f"; {result.overflow_bones} overflowed the part window"
@@ -147,7 +159,54 @@ class BI_OT_export_palette(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BI_OT_export_animation(bpy.types.Operator):
+    """导出稀疏多帧动画 clip。"""
+
+    bl_idname = "object.bi_export_animation"
+    bl_label = "Export Animation"
+    bl_description = "Export one sparse multi-frame clip per selected proxy armature"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        if not context.scene:
+            return False
+        if find_proxy_armature_for_object(context.active_object) is not None:
+            return True
+        return bool(list_selected_proxy_armatures(context))
+
+    def execute(self, context):
+        scene = context.scene
+        try:
+            result = export_animation_for_selected_proxy_armatures(
+                context,
+                output_directory=scene.bi_animation_output_dir,
+                frame_start=scene.bi_animation_frame_start,
+                frame_end=scene.bi_animation_frame_end,
+                frame_step=scene.bi_animation_frame_step,
+                fps=scene.bi_animation_fps,
+                write_metadata=bool(scene.bi_write_metadata),
+            )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, f"Animation export failed: {exc}")
+            return {"CANCELLED"}
+
+        message = (
+            f"Exported {result.exported_armatures}/{result.selected_armatures} clip(s)"
+            f"; total frames {result.total_frames}; total bones {result.total_exported_bones}"
+        )
+        self.report({"INFO"}, message)
+        if result.failed_armatures:
+            self.report({"WARNING"}, "; ".join(result.failed_armatures))
+        return {"FINISHED"}
+
+
 class BI_OT_import_palette(bpy.types.Operator):
+    """导入静态姿态到代理骨架。"""
+
     bl_idname = "object.bi_import_palette"
     bl_label = "Import Palette"
     bl_description = "Import a VS-T0 palette buffer and apply it onto the proxy armature"
@@ -214,6 +273,8 @@ class BI_OT_import_palette(bpy.types.Operator):
 
 
 class BI_OT_clear_previous_cache(bpy.types.Operator):
+    """清理 previous 缓存。"""
+
     bl_idname = "object.bi_clear_previous_cache"
     bl_label = "Clear Previous"
     bl_description = "Clear the cached previous-frame palette"
@@ -235,6 +296,8 @@ class BI_OT_clear_previous_cache(bpy.types.Operator):
 
 
 class BI_OT_dump_debug(bpy.types.Operator):
+    """把当前调试信息打印到 Blender 控制台。"""
+
     bl_idname = "object.bi_dump_debug"
     bl_label = "Dump Debug"
     bl_description = "Print proxy rig, bind and palette debug information to the Blender console"

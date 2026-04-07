@@ -134,7 +134,7 @@ def collect_vertex_group_statistics(mesh_obj, vertex_samples):
     return group_statistics
 
 
-def build_proxy_bone_definition(group_statistics, object_center, object_diagonal_length):
+def build_proxy_bone_definition(group_statistics, object_diagonal_length):
     """把单个顶点组的统计结果转换成一根代理骨定义。"""
     if (
         group_statistics["weight_sum"] <= FLOAT_COMPARISON_EPSILON
@@ -144,14 +144,14 @@ def build_proxy_bone_definition(group_statistics, object_center, object_diagonal
         return None
 
     centroid = group_statistics["weighted_sum"] / group_statistics["weight_sum"]
-    box_center, group_diagonal_length = calculate_aabb_center_and_diagonal(
+    _box_center, group_diagonal_length = calculate_aabb_center_and_diagonal(
         group_statistics["min_corner"],
         group_statistics["max_corner"],
     )
-    inward_direction = normalize_with_fallback(box_center - centroid, object_center - centroid)
-    inset_distance = max(min(0.1 * group_diagonal_length, 0.02 * object_diagonal_length), 0.002 * object_diagonal_length)
     bone_length = max(min(0.08 * group_diagonal_length, 0.03 * object_diagonal_length), 0.005 * object_diagonal_length)
-    head_position = centroid + inward_direction * inset_distance
+    # Use the weighted centroid directly so ring-shaped joint weights land in
+    # the middle of their coverage instead of snapping to the nearest surface vertex.
+    head_position = centroid
     tail_position = head_position + DEFAULT_PROXY_BONE_DIRECTION * bone_length
     return {
         "name": group_statistics["group"].name,
@@ -176,7 +176,6 @@ def build_proxy_bone_definitions(mesh_obj):
     for group_statistics in group_statistics_by_index.values():
         proxy_bone_definition = build_proxy_bone_definition(
             group_statistics,
-            object_center,
             object_diagonal_length,
         )
         if proxy_bone_definition is None:
