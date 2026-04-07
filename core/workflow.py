@@ -1,9 +1,16 @@
 """High-level workflows used by Blender operators."""
 
+from contextlib import ExitStack
+import os
+
 import bpy
 
 from ..constants import DEFAULT_PART_ROW_COUNT
-from .animation_export import export_animation_clip_for_proxy_armature
+from .animation_export import (
+    finalize_animation_export_job,
+    prepare_animation_export_job,
+    write_dense_runtime_frame,
+)
 from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
 from .context import (
     apply_part_id_layout,
@@ -305,22 +312,72 @@ def export_animation_for_proxy_armatures(
     total_exported_bones = 0
     failed_armatures = []
     exported_files = []
+    export_jobs = []
+    scene = context.scene
+    original_frame = scene.frame_current if scene is not None else 0
 
     try:
         for proxy_armature in normalized_armatures:
             try:
                 prepare_proxy_armature(proxy_armature, require_part_id=True)
-                result = export_animation_clip_for_proxy_armature(
-                    proxy_armature=proxy_armature,
-                    output_directory=output_directory,
-                    frame_start=frame_start,
-                    frame_end=frame_end,
-                    frame_step=frame_step,
-                    fps=fps,
-                    write_metadata=write_metadata,
+                export_jobs.append(
+                    prepare_animation_export_job(
+                        proxy_armature=proxy_armature,
+                        output_directory=output_directory,
+                        frame_start=frame_start,
+                        frame_end=frame_end,
+                        frame_step=frame_step,
+                        fps=fps,
+                        write_metadata=write_metadata,
+                    )
                 )
             except Exception as exc:
                 failed_armatures.append(f"{proxy_armature.name}: {exc}")
+                continue
+
+        if export_jobs and scene is not None:
+            exported_frames = export_jobs[0]["exported_frames"]
+            with ExitStack() as stack:
+                active_jobs = []
+                for export_job in export_jobs:
+                    export_job["binary_file"] = stack.enter_context(open(export_job["rows_path"], "wb"))
+                    active_jobs.append(export_job)
+
+                for frame_number in exported_frames:
+                    scene.frame_set(frame_number)
+                    next_active_jobs = []
+                    for export_job in active_jobs:
+                        try:
+                            write_dense_runtime_frame(export_job["binary_file"], export_job["export_plan"])
+                        except Exception as exc:
+                            failed_armatures.append(f"{export_job['proxy_armature'].name}: {exc}")
+                            for cleanup_path in (
+                                export_job["rows_path"],
+                                export_job["meta_path"],
+                                export_job["debug_metadata_path"],
+                            ):
+                                if cleanup_path and os.path.exists(cleanup_path):
+                                    os.remove(cleanup_path)
+                            continue
+                        next_active_jobs.append(export_job)
+                    active_jobs = next_active_jobs
+                    if not active_jobs:
+                        break
+
+            export_jobs = active_jobs
+
+        for export_job in export_jobs:
+            try:
+                result = finalize_animation_export_job(export_job)
+            except Exception as exc:
+                failed_armatures.append(f"{export_job['proxy_armature'].name}: {exc}")
+                for cleanup_path in (
+                    export_job["rows_path"],
+                    export_job["meta_path"],
+                    export_job["debug_metadata_path"],
+                ):
+                    if cleanup_path and os.path.exists(cleanup_path):
+                        os.remove(cleanup_path)
                 continue
 
             exported_armatures += 1
@@ -330,6 +387,8 @@ def export_animation_for_proxy_armatures(
             if result.debug_metadata_path:
                 exported_files.append(result.debug_metadata_path)
     finally:
+        if scene is not None:
+            scene.frame_set(original_frame)
         restore_selection_state(context, selection_state)
 
     return BatchAnimationExportResult(

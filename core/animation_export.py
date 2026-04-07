@@ -8,8 +8,7 @@ from array import array
 import bpy
 
 from ..constants import RESERVED_PALETTE_ROWS
-from .export import build_palette_export_patch
-from .layout import build_identity_buffer_rows
+from .export import build_dense_runtime_frame_rows, build_runtime_export_plan
 from .models import AnimationExportResult
 
 
@@ -23,17 +22,6 @@ def normalize_animation_frame_range(frame_start, frame_end, frame_step):
     if normalized_end < normalized_start:
         raise ValueError("Animation frame end must be greater than or equal to frame start")
     return tuple(range(normalized_start, normalized_end + 1, normalized_step))
-
-
-def build_dense_frame_rows_from_patch(patch_package, slot_count):
-    """Build one dense frame laid out as [slot][row] with identity-filled gaps."""
-    frame_rows = build_identity_buffer_rows(int(slot_count) * 3)
-    current_segment = patch_package["current_segment"]
-    for slot_id in sorted(set(int(slot_id) for slot_id in patch_package["used_slot_ids"])):
-        source_row_base = RESERVED_PALETTE_ROWS + slot_id * 3
-        target_row_base = slot_id * 3
-        frame_rows[target_row_base:target_row_base + 3] = current_segment[source_row_base:source_row_base + 3]
-    return frame_rows
 
 
 def build_runtime_export_name_prefix(proxy_armature):
@@ -84,7 +72,20 @@ def write_animation_meta_rows(meta_path, meta_rows):
             meta_file.write(struct.pack("<4I", *(int(value) for value in row)))
 
 
-def export_animation_clip_for_proxy_armature(
+def flatten_dense_runtime_frame_rows(frame_rows):
+    """Pack one dense [slot][row] frame into a contiguous float array."""
+    flat_float_values = array("f")
+    for row in frame_rows:
+        flat_float_values.extend(row)
+    return flat_float_values
+
+
+def write_dense_runtime_frame(binary_file, export_plan):
+    """Build and stream one dense animation frame into the open rows file."""
+    flatten_dense_runtime_frame_rows(build_dense_runtime_frame_rows(export_plan)).tofile(binary_file)
+
+
+def prepare_animation_export_job(
     proxy_armature,
     output_directory,
     frame_start,
@@ -93,64 +94,29 @@ def export_animation_clip_for_proxy_armature(
     fps,
     write_metadata=True,
 ):
-    """Export one dense animation rows buffer plus one mutable meta buffer."""
-    scene = bpy.context.scene
+    """Resolve reusable export state for one proxy armature."""
     exported_frames = normalize_animation_frame_range(frame_start, frame_end, frame_step)
     if not exported_frames:
         raise ValueError("No animation frames to export")
 
-    directory_path, rows_path, meta_path, debug_metadata_path = resolve_animation_export_paths(
+    _directory_path, rows_path, meta_path, debug_metadata_path = resolve_animation_export_paths(
         output_directory,
         proxy_armature,
     )
-    original_frame = scene.frame_current
+    export_plan = build_runtime_export_plan(proxy_armature)
+    used_slots = tuple(sorted(set(int(slot_id) for slot_id in export_plan["used_slot_ids"])))
+    if not used_slots:
+        raise ValueError(f"No exportable slots fit inside the configured part window for {proxy_armature.name}")
 
-    used_slots = None
-    slot_count = 0
-    frame_rows = []
-    exported_bone_count = 0
-    overflow_bones = []
-    bind_fallback_bones = []
-
-    try:
-        for frame_number in exported_frames:
-            scene.frame_set(frame_number)
-            bpy.context.view_layer.update()
-            patch_package = build_palette_export_patch(proxy_armature)
-            current_used_slots = tuple(sorted(set(int(slot_id) for slot_id in patch_package["used_slot_ids"])))
-            if used_slots is None:
-                used_slots = current_used_slots
-                if not used_slots:
-                    raise ValueError(
-                        f"No exportable slots fit inside the configured part window for {proxy_armature.name}"
-                    )
-                exported_bone_count = len(used_slots)
-                slot_count = max(used_slots) + 1
-            elif current_used_slots != used_slots:
-                raise ValueError(
-                    f"Exportable slot set changed at frame {frame_number}; refresh bind or export settings first"
-                )
-
-            frame_rows.extend(build_dense_frame_rows_from_patch(patch_package, slot_count))
-            overflow_bones.extend(patch_package["metadata"]["overflow_bones"])
-            bind_fallback_bones.extend(patch_package["metadata"]["bind_fallback_bones"])
-    finally:
-        scene.frame_set(original_frame)
-        bpy.context.view_layer.update()
-
-    flat_float_values = array("f")
-    for row in frame_rows:
-        flat_float_values.extend(row)
-    with open(rows_path, "wb") as binary_file:
-        flat_float_values.tofile(binary_file)
-
+    slot_count = int(export_plan["slot_count"])
+    exported_bone_count = len(used_slots)
+    overflow_bones = list(export_plan["overflow_bone_names"])
+    bind_fallback_bones = list(export_plan["bind_fallback_bones"])
     meta_rows = build_animation_meta_uint4_rows(
         proxy_armature,
         frame_count=len(exported_frames),
         slot_count=slot_count,
     )
-    write_animation_meta_rows(meta_path, meta_rows)
-
     metadata = {
         "format": "vs_t0_dense_animation_v1",
         "armature_name": proxy_armature.name,
@@ -168,7 +134,7 @@ def export_animation_clip_for_proxy_armature(
         "bone_count": exported_bone_count,
         "rows_per_slot": 3,
         "rows_per_frame": int(slot_count) * 3,
-        "used_slots": list(used_slots or ()),
+        "used_slots": list(used_slots),
         "storage_layout": "[frame][slot][row]",
         "meta_layout_uint4": [
             ["slot_count", "frame_count", "rows_per_frame", "reserved_rows"],
@@ -181,19 +147,73 @@ def export_animation_clip_for_proxy_armature(
         "overflow_bones": overflow_bones,
         "bind_fallback_bones": bind_fallback_bones,
     }
-    if write_metadata:
+    return {
+        "proxy_armature": proxy_armature,
+        "export_plan": export_plan,
+        "exported_frames": exported_frames,
+        "rows_path": rows_path,
+        "meta_path": meta_path,
+        "debug_metadata_path": debug_metadata_path,
+        "meta_rows": meta_rows,
+        "metadata": metadata,
+        "write_metadata": bool(write_metadata),
+        "frame_count": len(exported_frames),
+        "slot_count": slot_count,
+        "exported_bones": exported_bone_count,
+    }
+
+
+def finalize_animation_export_job(export_job):
+    """Write meta/debug files and return the public export summary."""
+    write_animation_meta_rows(export_job["meta_path"], export_job["meta_rows"])
+
+    debug_metadata_path = export_job["debug_metadata_path"]
+    if export_job["write_metadata"]:
         with open(debug_metadata_path, "w", encoding="utf-8") as metadata_file:
-            json.dump(metadata, metadata_file, indent=2, ensure_ascii=False)
+            json.dump(export_job["metadata"], metadata_file, indent=2, ensure_ascii=False)
     else:
         debug_metadata_path = ""
 
     return AnimationExportResult(
-        armature_name=proxy_armature.name,
-        rows_path=rows_path,
-        meta_path=meta_path,
-        frame_count=len(exported_frames),
-        slot_count=slot_count,
-        exported_bones=exported_bone_count,
-        metadata=metadata,
+        armature_name=export_job["proxy_armature"].name,
+        rows_path=export_job["rows_path"],
+        meta_path=export_job["meta_path"],
+        frame_count=export_job["frame_count"],
+        slot_count=export_job["slot_count"],
+        exported_bones=export_job["exported_bones"],
+        metadata=export_job["metadata"],
         debug_metadata_path=debug_metadata_path,
     )
+
+
+def export_animation_clip_for_proxy_armature(
+    proxy_armature,
+    output_directory,
+    frame_start,
+    frame_end,
+    frame_step,
+    fps,
+    write_metadata=True,
+):
+    """Export one dense animation rows buffer plus one mutable meta buffer."""
+    scene = bpy.context.scene
+    export_job = prepare_animation_export_job(
+        proxy_armature=proxy_armature,
+        output_directory=output_directory,
+        frame_start=frame_start,
+        frame_end=frame_end,
+        frame_step=frame_step,
+        fps=fps,
+        write_metadata=write_metadata,
+    )
+    original_frame = scene.frame_current
+
+    try:
+        with open(export_job["rows_path"], "wb") as binary_file:
+            for frame_number in export_job["exported_frames"]:
+                scene.frame_set(frame_number)
+                write_dense_runtime_frame(binary_file, export_job["export_plan"])
+    finally:
+        scene.frame_set(original_frame)
+
+    return finalize_animation_export_job(export_job)

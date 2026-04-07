@@ -124,6 +124,66 @@ def build_current_palette_segment(proxy_armature, part_row_count):
     }
 
 
+def build_runtime_export_plan(proxy_armature):
+    """Prepare reusable dense runtime-export data for one proxy armature."""
+    layout_settings = validate_palette_window_settings(proxy_armature)
+    runtime_entries = []
+    exported_bone_metadata = []
+    overflow_bone_names = []
+    bind_fallback_bone_names = []
+    slot_count = 0
+
+    for pose_bone in list_exportable_proxy_pose_bones(proxy_armature):
+        slot_id = int(pose_bone.bi_slot_id)
+        row_base = RESERVED_PALETTE_ROWS + slot_id * 3
+        if row_base + 2 >= layout_settings["part_row_count"]:
+            overflow_bone_names.append(pose_bone.name)
+            continue
+
+        bind_matrix = resolve_bind_matrix_for_export(pose_bone, bind_fallback_bone_names)
+        bind_inverse = bind_matrix.inverted()
+        dense_row_base = slot_id * 3
+        slot_count = max(slot_count, slot_id + 1)
+        runtime_entries.append(
+            {
+                "pose_bone": pose_bone,
+                "slot_id": slot_id,
+                "dense_row_base": dense_row_base,
+                "bind_inverse": bind_inverse,
+            }
+        )
+        exported_bone_metadata.append(
+            {
+                "name": pose_bone.name,
+                "slot_id": slot_id,
+                "bone_type": getattr(pose_bone, "bi_bone_type", "MAIN"),
+                "row_base": dense_row_base,
+            }
+        )
+
+    return {
+        "layout_settings": layout_settings,
+        "slot_count": slot_count,
+        "frame_template_rows": build_identity_buffer_rows(slot_count * 3),
+        "runtime_entries": runtime_entries,
+        "exported_bone_metadata": exported_bone_metadata,
+        "overflow_bone_names": overflow_bone_names,
+        "bind_fallback_bones": bind_fallback_bone_names,
+        "used_slot_ids": [entry["slot_id"] for entry in runtime_entries],
+    }
+
+
+def build_dense_runtime_frame_rows(export_plan):
+    """Build one dense [slot][row] frame from the current pose using a cached export plan."""
+    frame_rows = list(export_plan["frame_template_rows"])
+    for runtime_entry in export_plan["runtime_entries"]:
+        skin_matrix = runtime_entry["pose_bone"].matrix.copy() @ runtime_entry["bind_inverse"]
+        skin_matrix_in_game_space = convert_matrix_from_blender_to_game(skin_matrix)
+        dense_row_base = runtime_entry["dense_row_base"]
+        frame_rows[dense_row_base:dense_row_base + 3] = convert_matrix_to_palette_rows(skin_matrix_in_game_space)
+    return frame_rows
+
+
 def resolve_previous_palette_segment(proxy_armature, current_palette_segment, part_row_count):
     """返回 previous 段；若无缓存则用 current 初始化。"""
     cache_key = build_previous_palette_cache_key(proxy_armature)
