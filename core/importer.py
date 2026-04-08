@@ -5,7 +5,7 @@ from .context import make_object_active
 from .export import list_exportable_proxy_pose_bones
 from .layout import build_matrix_from_flat_values, build_matrix_from_palette_rows
 from .models import PaletteImportResult
-from .transform import convert_matrix_from_game_to_blender
+from .transform import convert_matrix_from_game_to_blender, get_proxy_buffer_correction_mode
 
 
 def resolve_palette_segment_window(proxy_armature, metadata, segment_name):
@@ -39,6 +39,7 @@ def apply_palette_segment_to_proxy_armature(
 ):
     """把磁盘中的一个调色板片段应用到代理骨架的 pose bone。"""
     palette_window = resolve_palette_segment_window(proxy_armature, metadata, segment)
+    correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
     make_object_active(context, proxy_armature, mode="POSE")
 
     imported_bone_count = 0
@@ -52,7 +53,10 @@ def apply_palette_segment_to_proxy_armature(
             continue
 
         skin_matrix_in_game_space = build_matrix_from_palette_rows(rows[local_row_base:local_row_base + 3])
-        skin_matrix_in_blender_space = convert_matrix_from_game_to_blender(skin_matrix_in_game_space)
+        skin_matrix_in_blender_space = convert_matrix_from_game_to_blender(
+            skin_matrix_in_game_space,
+            correction_mode,
+        )
         bind_matrix = build_matrix_from_flat_values(list(getattr(pose_bone, "bi_bind_matrix", [])))
         if not getattr(pose_bone, "bi_bind_valid", False):
             bind_matrix = pose_bone.bone.matrix_local.copy()

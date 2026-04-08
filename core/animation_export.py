@@ -1,4 +1,4 @@
-"""Dense multi-frame animation export for one proxy armature per file."""
+"""Scene-evaluated multi-frame animation export using TQ + bind + meta buffers."""
 
 import json
 import os
@@ -8,8 +8,15 @@ from array import array
 import bpy
 
 from ..constants import RESERVED_PALETTE_ROWS
-from .export import build_dense_runtime_frame_rows, build_runtime_export_plan
+from .export import build_runtime_export_plan
+from .layout import convert_matrix_to_palette_rows
 from .models import AnimationExportResult
+from .transform import BUFFER_CORRECTION_NONE, build_extra_blender_correction_matrix, get_proxy_buffer_correction_mode
+
+
+INVALID_SLOT_ID = 0xFFFFFFFF
+ANIM_FLAG_PLAYING = 1
+ANIM_FLAG_LOOPING = 2
 
 
 def normalize_animation_frame_range(frame_start, frame_end, frame_step):
@@ -36,53 +43,142 @@ def build_runtime_export_name_prefix(proxy_armature):
 
 
 def resolve_animation_export_paths(output_directory, proxy_armature):
-    """Build dense animation rows/meta paths for one proxy armature."""
+    """Build animation/bind/meta paths for one proxy armature."""
     directory_path = bpy.path.abspath(output_directory or "//")
     os.makedirs(directory_path, exist_ok=True)
     safe_name = build_runtime_export_name_prefix(proxy_armature)
-    rows_path = os.path.join(directory_path, f"{safe_name}_anim_rows.buf")
+    tqs_path = os.path.join(directory_path, f"{safe_name}_anim_tqs.buf")
+    bind_path = os.path.join(directory_path, f"{safe_name}_bind.buf")
     meta_path = os.path.join(directory_path, f"{safe_name}_anim_meta.buf")
     debug_metadata_path = os.path.join(directory_path, f"{safe_name}_anim.json")
-    return directory_path, rows_path, meta_path, debug_metadata_path
+    return directory_path, tqs_path, bind_path, meta_path, debug_metadata_path
 
 
-def build_animation_meta_uint4_rows(proxy_armature, frame_count, slot_count):
-    """Pack the mutable runtime constants into uint4 rows for HLSL access."""
-    rows_per_frame = int(slot_count) * 3
-    return [
+def pack_slot_ids_uint4_rows(slot_ids):
+    """Pack slot ids into uint4 rows for the runtime lookup table."""
+    packed_rows = []
+    normalized_slot_ids = [int(slot_id) for slot_id in slot_ids]
+    for slot_index in range(0, len(normalized_slot_ids), 4):
+        packed_chunk = normalized_slot_ids[slot_index:slot_index + 4]
+        while len(packed_chunk) < 4:
+            packed_chunk.append(INVALID_SLOT_ID)
+        packed_rows.append(tuple(packed_chunk))
+    return packed_rows
+
+
+def build_initial_playback_state(frame_count):
+    """Return the initial previous/current frame pair expected by the runtime."""
+    safe_frame_count = max(int(frame_count), 1)
+    if safe_frame_count == 1:
+        return 0, 0
+    return 0, 1
+
+
+def build_animation_meta_uint4_rows(proxy_armature, frame_count, slot_ids, presents_per_step=1):
+    """Pack runtime constants into uint4 rows for the TQ playback shaders."""
+    normalized_slot_ids = tuple(int(slot_id) for slot_id in slot_ids)
+    packed_slot_rows = pack_slot_ids_uint4_rows(normalized_slot_ids)
+    previous_frame, current_frame = build_initial_playback_state(frame_count)
+    safe_frame_count = max(int(frame_count), 1)
+    loop_end = safe_frame_count - 1
+    header_rows = [
         (
-            int(slot_count),
-            int(frame_count),
-            int(rows_per_frame),
+            len(normalized_slot_ids),
+            safe_frame_count,
             int(RESERVED_PALETTE_ROWS),
+            len(packed_slot_rows),
         ),
         (
             int(getattr(proxy_armature, "bi_part_base", 0)),
             int(getattr(proxy_armature, "bi_previous_offset", 0)),
-            0,
+            int(getattr(proxy_armature, "bi_part_size", 0)),
             int(getattr(proxy_armature, "bi_part_id", 0)),
         ),
+        (
+            int(previous_frame),
+            int(current_frame),
+            0,
+            int(ANIM_FLAG_PLAYING | ANIM_FLAG_LOOPING),
+        ),
+        (
+            max(int(presents_per_step), 1),
+            0,
+            int(loop_end),
+            0,
+        ),
     ]
+    return header_rows + packed_slot_rows
 
 
 def write_animation_meta_rows(meta_path, meta_rows):
-    """Write uint4 meta rows to disk for RWStructuredBuffer/StructuredBuffer use."""
+    """Write uint4 meta rows to disk for RWStructuredBuffer use."""
     with open(meta_path, "wb") as meta_file:
         for row in meta_rows:
             meta_file.write(struct.pack("<4I", *(int(value) for value in row)))
 
 
-def flatten_dense_runtime_frame_rows(frame_rows):
-    """Pack one dense [slot][row] frame into a contiguous float array."""
+def build_bind_inverse_rows(export_entries):
+    """Flatten cached bind-inverse matrices into float4 rows."""
     flat_float_values = array("f")
-    for row in frame_rows:
-        flat_float_values.extend(row)
+    for export_entry in export_entries:
+        for row in convert_matrix_to_palette_rows(export_entry["bind_inverse"]):
+            flat_float_values.extend(row)
     return flat_float_values
 
 
-def write_dense_runtime_frame(binary_file, export_plan):
-    """Build and stream one dense animation frame into the open rows file."""
-    flatten_dense_runtime_frame_rows(build_dense_runtime_frame_rows(export_plan)).tofile(binary_file)
+def write_bind_inverse_buffer(bind_path, export_entries):
+    """Write bind-inverse rows once for one proxy armature."""
+    bind_rows = build_bind_inverse_rows(export_entries)
+    with open(bind_path, "wb") as bind_file:
+        bind_rows.tofile(bind_file)
+
+
+def flatten_tqs_frame_rows(export_entries):
+    """Pack one frame of evaluated proxy pose into contiguous TQ float rows."""
+    flat_float_values = array("f")
+    extend_values = flat_float_values.extend
+    for export_entry in export_entries:
+        pose_matrix = export_entry["corrected_pose_matrix_getter"]()
+        translation, rotation, scale = pose_matrix.decompose()
+        rotation.normalize()
+        extend_values((translation.x, translation.y, translation.z, 1.0))
+        extend_values((rotation.x, rotation.y, rotation.z, rotation.w))
+    return flat_float_values
+
+
+def build_tqs_frame_buffer(export_entries):
+    """Allocate one reusable per-frame float buffer for TQ export."""
+    return array("f", [0.0]) * (len(export_entries) * 8)
+
+
+def fill_tqs_frame_buffer(export_entries, frame_buffer):
+    """Fill one reusable float buffer with the current frame's TQ values."""
+    buffer_index = 0
+    for export_entry in export_entries:
+        pose_matrix = export_entry["corrected_pose_matrix_getter"]()
+        translation, rotation, _scale = pose_matrix.decompose()
+        rotation.normalize()
+
+        frame_buffer[buffer_index] = translation.x
+        frame_buffer[buffer_index + 1] = translation.y
+        frame_buffer[buffer_index + 2] = translation.z
+        frame_buffer[buffer_index + 3] = 1.0
+
+        frame_buffer[buffer_index + 4] = rotation.x
+        frame_buffer[buffer_index + 5] = rotation.y
+        frame_buffer[buffer_index + 6] = rotation.z
+        frame_buffer[buffer_index + 7] = rotation.w
+        buffer_index += 8
+
+    return frame_buffer
+
+
+def write_tqs_animation_frame(binary_file, export_entries, frame_buffer=None):
+    """Write one scene-evaluated TQ frame into the open animation file."""
+    if frame_buffer is None:
+        flatten_tqs_frame_rows(export_entries).tofile(binary_file)
+        return
+    fill_tqs_frame_buffer(export_entries, frame_buffer).tofile(binary_file)
 
 
 def prepare_animation_export_job(
@@ -99,30 +195,48 @@ def prepare_animation_export_job(
     if not exported_frames:
         raise ValueError("No animation frames to export")
 
-    _directory_path, rows_path, meta_path, debug_metadata_path = resolve_animation_export_paths(
+    _directory_path, tqs_path, bind_path, meta_path, debug_metadata_path = resolve_animation_export_paths(
         output_directory,
         proxy_armature,
     )
     export_plan = build_runtime_export_plan(proxy_armature)
-    used_slots = tuple(sorted(set(int(slot_id) for slot_id in export_plan["used_slot_ids"])))
-    if not used_slots:
+    correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
+    extra_correction_matrix = build_extra_blender_correction_matrix(correction_mode)
+    export_entries = tuple(
+        {
+            **export_entry,
+            "corrected_pose_matrix_getter": (
+                (lambda pose_bone=export_entry["pose_bone"]: pose_bone.matrix.copy())
+                if correction_mode == BUFFER_CORRECTION_NONE
+                else (
+                    lambda pose_bone=export_entry["pose_bone"], correction_matrix=extra_correction_matrix:
+                    correction_matrix @ pose_bone.matrix
+                )
+            ),
+        }
+        for export_entry in export_plan["runtime_entries"]
+    )
+    slot_ids = tuple(int(export_entry["slot_id"]) for export_entry in export_entries)
+    if not slot_ids:
         raise ValueError(f"No exportable slots fit inside the configured part window for {proxy_armature.name}")
 
-    slot_count = int(export_plan["slot_count"])
-    exported_bone_count = len(used_slots)
+    bone_count = len(export_entries)
     overflow_bones = list(export_plan["overflow_bone_names"])
     bind_fallback_bones = list(export_plan["bind_fallback_bones"])
     meta_rows = build_animation_meta_uint4_rows(
         proxy_armature,
         frame_count=len(exported_frames),
-        slot_count=slot_count,
+        slot_ids=slot_ids,
+        presents_per_step=1,
     )
     metadata = {
-        "format": "vs_t0_dense_animation_v1",
+        "format": "vs_t0_tq_animation_v1",
         "armature_name": proxy_armature.name,
         "source_mesh": getattr(proxy_armature, "bi_source_mesh_name", ""),
         "part_id": int(getattr(proxy_armature, "bi_part_id", -1)),
         "part_base": int(getattr(proxy_armature, "bi_part_base", 0)),
+        "part_size": int(getattr(proxy_armature, "bi_part_size", 0)),
+        "buffer_correction_mode": get_proxy_buffer_correction_mode(proxy_armature),
         "previous_offset": int(getattr(proxy_armature, "bi_previous_offset", 0)),
         "fps": float(fps),
         "frame_start": exported_frames[0],
@@ -130,41 +244,55 @@ def prepare_animation_export_job(
         "frame_step": int(frame_step),
         "frame_count": len(exported_frames),
         "frame_numbers": list(exported_frames),
-        "slot_count": int(slot_count),
-        "bone_count": exported_bone_count,
-        "rows_per_slot": 3,
-        "rows_per_frame": int(slot_count) * 3,
-        "used_slots": list(used_slots),
-        "storage_layout": "[frame][slot][row]",
-        "meta_layout_uint4": [
-            ["slot_count", "frame_count", "rows_per_frame", "reserved_rows"],
-            ["part_base", "previous_offset", "current_frame", "part_id"],
+        "bone_count": bone_count,
+        "slot_ids": list(slot_ids),
+        "rows_per_bone": 2,
+        "storage_layout": "[frame][bone][row]",
+        "row_semantics": [
+            "translation_xyz",
+            "rotation_quaternion_xyzw",
         ],
-        "initial_current_frame": 0,
-        "rows_path": rows_path,
+        "meta_layout_uint4": [
+            ["bone_count", "frame_count", "reserved_rows", "slot_map_row_count"],
+            ["part_base", "previous_offset", "part_size", "part_id"],
+            ["previous_frame", "current_frame", "playback_tick", "flags"],
+            ["presents_per_step", "loop_start", "loop_end", "reserved"],
+            ["packed_slot_ids...", "...", "...", "..."],
+        ],
+        "initial_previous_frame": meta_rows[2][0],
+        "initial_current_frame": meta_rows[2][1],
+        "initial_playback_tick": meta_rows[2][2],
+        "initial_flags": meta_rows[2][3],
+        "presents_per_step": meta_rows[3][0],
+        "loop_start": meta_rows[3][1],
+        "loop_end": meta_rows[3][2],
+        "coordinate_space": "blender_armature_space",
+        "coordinate_correction_runtime": "baked_in_export_tq",
+        "tqs_path": tqs_path,
+        "bind_path": bind_path,
         "meta_path": meta_path,
-        "coordinate_correction": "MATRIX_RX_90_DEG",
         "overflow_bones": overflow_bones,
         "bind_fallback_bones": bind_fallback_bones,
     }
     return {
         "proxy_armature": proxy_armature,
-        "export_plan": export_plan,
+        "export_entries": export_entries,
         "exported_frames": exported_frames,
-        "rows_path": rows_path,
+        "tqs_path": tqs_path,
+        "bind_path": bind_path,
         "meta_path": meta_path,
         "debug_metadata_path": debug_metadata_path,
         "meta_rows": meta_rows,
         "metadata": metadata,
         "write_metadata": bool(write_metadata),
         "frame_count": len(exported_frames),
-        "slot_count": slot_count,
-        "exported_bones": exported_bone_count,
+        "bone_count": bone_count,
     }
 
 
 def finalize_animation_export_job(export_job):
-    """Write meta/debug files and return the public export summary."""
+    """Write bind/meta/debug files and return the public export summary."""
+    write_bind_inverse_buffer(export_job["bind_path"], export_job["export_entries"])
     write_animation_meta_rows(export_job["meta_path"], export_job["meta_rows"])
 
     debug_metadata_path = export_job["debug_metadata_path"]
@@ -176,11 +304,11 @@ def finalize_animation_export_job(export_job):
 
     return AnimationExportResult(
         armature_name=export_job["proxy_armature"].name,
-        rows_path=export_job["rows_path"],
+        tqs_path=export_job["tqs_path"],
+        bind_path=export_job["bind_path"],
         meta_path=export_job["meta_path"],
         frame_count=export_job["frame_count"],
-        slot_count=export_job["slot_count"],
-        exported_bones=export_job["exported_bones"],
+        bone_count=export_job["bone_count"],
         metadata=export_job["metadata"],
         debug_metadata_path=debug_metadata_path,
     )
@@ -195,7 +323,7 @@ def export_animation_clip_for_proxy_armature(
     fps,
     write_metadata=True,
 ):
-    """Export one dense animation rows buffer plus one mutable meta buffer."""
+    """Export one scene-evaluated TQ animation set for one proxy armature."""
     scene = bpy.context.scene
     export_job = prepare_animation_export_job(
         proxy_armature=proxy_armature,
@@ -209,10 +337,10 @@ def export_animation_clip_for_proxy_armature(
     original_frame = scene.frame_current
 
     try:
-        with open(export_job["rows_path"], "wb") as binary_file:
+        with open(export_job["tqs_path"], "wb") as binary_file:
             for frame_number in export_job["exported_frames"]:
                 scene.frame_set(frame_number)
-                write_dense_runtime_frame(binary_file, export_job["export_plan"])
+                write_tqs_animation_frame(binary_file, export_job["export_entries"])
     finally:
         scene.frame_set(original_frame)
 

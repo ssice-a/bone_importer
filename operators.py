@@ -163,9 +163,9 @@ class BI_OT_export_animation(bpy.types.Operator):
     """导出稀疏多帧动画 clip。"""
 
     bl_idname = "object.bi_export_animation"
-    bl_label = "Export Runtime Buffers"
+    bl_label = "Export Runtime TQ"
     bl_description = (
-        "Export dense runtime buffers for the selected frame range; set frame start equal to frame end to export one frame"
+        "Export scene-evaluated TQ, bind, and meta buffers for the selected frame range"
     )
     bl_options = {"REGISTER"}
 
@@ -198,15 +198,23 @@ class BI_OT_export_animation(bpy.types.Operator):
 
         if scene.bi_animation_frame_start == scene.bi_animation_frame_end:
             message = (
-                f"Exported {result.exported_armatures}/{result.selected_armatures} single-frame buffer pair(s)"
-                f"; total bones {result.total_exported_bones}"
+                f"Exported {result.exported_armatures}/{result.selected_armatures} single-frame TQ set(s)"
+                f"; total bones {result.total_exported_bones}; time {result.elapsed_seconds:.2f}s"
             )
         else:
             message = (
-                f"Exported {result.exported_armatures}/{result.selected_armatures} frame-range buffer pair(s)"
-                f"; total frames {result.total_frames}; total bones {result.total_exported_bones}"
+                f"Exported {result.exported_armatures}/{result.selected_armatures} frame-range TQ set(s)"
+                f"; sampled frames {result.sampled_frames}; aggregate frames {result.total_frames}"
+                f"; total bones {result.total_exported_bones}"
+                f"; time {result.elapsed_seconds:.2f}s"
             )
         self.report({"INFO"}, message)
+        self.report(
+            {"INFO"},
+            "frame_set "
+            f"{result.frame_set_seconds:.2f}s | frame_write {result.frame_write_seconds:.2f}s"
+            f" | finalize {result.finalize_seconds:.2f}s | other {result.other_seconds:.2f}s",
+        )
         if result.failed_armatures:
             self.report({"WARNING"}, "; ".join(result.failed_armatures))
         return {"FINISHED"}

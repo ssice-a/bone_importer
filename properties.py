@@ -7,6 +7,7 @@ from .constants import (
     DEFAULT_PART_ROW_COUNT,
     DEFAULT_PREVIOUS_FRAME_ROW_OFFSET,
 )
+from .core.transform import BUFFER_CORRECTION_ITEMS, BUFFER_CORRECTION_NONE
 
 
 REGISTERED_PROPERTY_PATHS = (
@@ -24,6 +25,7 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_part_size"),
     (bpy.types.Object, "bi_previous_offset"),
     (bpy.types.Object, "bi_buffer_size"),
+    (bpy.types.Object, "bi_buffer_correction_mode"),
     (bpy.types.Scene, "bi_output_path"),
     (bpy.types.Scene, "bi_animation_output_dir"),
     (bpy.types.Scene, "bi_animation_frame_start"),
@@ -125,6 +127,12 @@ def register_addon_properties():
         min=1,
         description="Total exported buffer size measured in float4 rows.",
     )
+    bpy.types.Object.bi_buffer_correction_mode = bpy.props.EnumProperty(
+        name="Buffer Correction",
+        items=BUFFER_CORRECTION_ITEMS,
+        default=BUFFER_CORRECTION_NONE,
+        description="Optional extra correction used by special buffers such as eyelashes.",
+    )
 
     bpy.types.Scene.bi_output_path = bpy.props.StringProperty(
         name="Output Path",
@@ -136,7 +144,7 @@ def register_addon_properties():
         name="Animation Dir",
         default="//animation_clips",
         subtype="DIR_PATH",
-        description="Directory used to export dense runtime buffers for the selected frame range.",
+        description="Directory used to export scene-evaluated TQ, bind, and meta buffers for the selected frame range.",
     )
     bpy.types.Scene.bi_animation_frame_start = bpy.props.IntProperty(
         name="Frame Start",
@@ -152,13 +160,13 @@ def register_addon_properties():
         name="Frame Step",
         default=1,
         min=1,
-        description="Frame step used while sampling the runtime buffers.",
+        description="Frame step used while sampling scene-evaluated TQ data.",
     )
     bpy.types.Scene.bi_animation_fps = bpy.props.FloatProperty(
         name="FPS",
         default=60.0,
         min=1.0,
-        description="Playback FPS written into the optional debug metadata JSON for the exported frame range.",
+        description="Playback FPS written into the optional debug metadata JSON for the exported TQ clip.",
     )
     bpy.types.Scene.bi_import_path = bpy.props.StringProperty(
         name="Import Path",

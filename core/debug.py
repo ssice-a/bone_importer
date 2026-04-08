@@ -12,7 +12,11 @@ from .export import list_exportable_proxy_pose_bones
 from .importer import resolve_palette_segment_window
 from .io import build_metadata_path_from_binary_path, load_palette_file, read_palette_metadata_from_file
 from .layout import build_matrix_from_flat_values, build_matrix_from_palette_rows
-from .transform import convert_matrix_from_blender_to_game, convert_matrix_from_game_to_blender
+from .transform import (
+    convert_matrix_from_blender_to_game,
+    convert_matrix_from_game_to_blender,
+    get_proxy_buffer_correction_mode,
+)
 
 
 def _vector_to_list(vector):
@@ -109,7 +113,7 @@ def _build_pose_bone_debug_entry(pose_bone):
     }
 
 
-def _build_import_debug_entry(pose_bone, rows, row_start, segment_base):
+def _build_import_debug_entry(pose_bone, rows, row_start, segment_base, correction_mode):
     """收集单根骨从调色板到姿态矩阵的导入链。"""
     slot_id = int(getattr(pose_bone, "bi_slot_id", -1))
     absolute_row_base = segment_base + RESERVED_PALETTE_ROWS + slot_id * 3
@@ -131,7 +135,7 @@ def _build_import_debug_entry(pose_bone, rows, row_start, segment_base):
 
     palette_rows = rows[local_row_base:local_row_base + 3]
     game_skin = build_matrix_from_palette_rows(palette_rows)
-    blender_skin = convert_matrix_from_game_to_blender(game_skin)
+    blender_skin = convert_matrix_from_game_to_blender(game_skin, correction_mode)
     entry.update(
         {
             "missing_rows": False,
@@ -144,7 +148,7 @@ def _build_import_debug_entry(pose_bone, rows, row_start, segment_base):
     return entry
 
 
-def _build_export_debug_entry(pose_bone):
+def _build_export_debug_entry(pose_bone, correction_mode):
     """收集单根骨从姿态矩阵回写到游戏调色板的导出链。"""
     bind_matrix = build_matrix_from_flat_values(list(getattr(pose_bone, "bi_bind_matrix", [])))
     if not getattr(pose_bone, "bi_bind_valid", False):
@@ -159,7 +163,7 @@ def _build_export_debug_entry(pose_bone):
         "bind_matrix": _matrix_to_rows(bind_matrix),
         "bind_inverse": _matrix_to_rows(bind_inverse),
         "blender_skin_matrix": _matrix_to_rows(blender_skin),
-        "game_skin_matrix": _matrix_to_rows(convert_matrix_from_blender_to_game(blender_skin)),
+        "game_skin_matrix": _matrix_to_rows(convert_matrix_from_blender_to_game(blender_skin, correction_mode)),
     }
 
 
@@ -175,6 +179,7 @@ def build_proxy_debug_snapshot(context, proxy_armature, binary_path="", segment=
     layout = apply_part_id_layout(proxy_armature, require_configured=False)
     proxy_bones = list_exportable_proxy_pose_bones(proxy_armature)
     sampled_bones = proxy_bones[: max(1, int(sample_count))]
+    correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
 
     snapshot = {
         "armature": {
@@ -185,6 +190,7 @@ def build_proxy_debug_snapshot(context, proxy_armature, binary_path="", segment=
             "part_size": int(getattr(proxy_armature, "bi_part_size", 0)),
             "previous_offset": int(getattr(proxy_armature, "bi_previous_offset", 0)),
             "buffer_size": int(getattr(proxy_armature, "bi_buffer_size", 0)),
+            "buffer_correction_mode": correction_mode,
         },
         "layout": layout,
         "source_mesh": {
@@ -195,7 +201,7 @@ def build_proxy_debug_snapshot(context, proxy_armature, binary_path="", segment=
             "armature_modifiers": _build_modifier_summary(source_mesh),
         },
         "sampled_proxy_bones": [_build_pose_bone_debug_entry(pose_bone) for pose_bone in sampled_bones],
-        "export_debug": [_build_export_debug_entry(pose_bone) for pose_bone in sampled_bones],
+        "export_debug": [_build_export_debug_entry(pose_bone, correction_mode) for pose_bone in sampled_bones],
         "import_debug": None,
         "scene": {
             "frame_current": int(context.scene.frame_current) if context.scene else 0,
@@ -229,6 +235,7 @@ def build_proxy_debug_snapshot(context, proxy_armature, binary_path="", segment=
                     loaded_palette.rows,
                     loaded_palette.row_start,
                     palette_window["segment_base"],
+                    correction_mode,
                 )
                 for pose_bone in sampled_bones
             ],

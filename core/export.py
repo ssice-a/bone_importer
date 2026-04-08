@@ -15,7 +15,7 @@ from .layout import (
     calculate_slot_capacity_for_part_size,
     convert_matrix_to_palette_rows,
 )
-from .transform import convert_matrix_from_blender_to_game
+from .transform import convert_matrix_from_blender_to_game, get_proxy_buffer_correction_mode
 
 
 _cached_previous_palette_segments = {}
@@ -89,6 +89,7 @@ def resolve_bind_matrix_for_export(pose_bone, bind_fallback_bone_names):
 def build_current_palette_segment(proxy_armature, part_row_count):
     """为当前部位构建 current 段。"""
     current_palette_segment = build_empty_palette_segment(part_row_count)
+    correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
     exported_bone_metadata = []
     overflow_bone_names = []
     bind_fallback_bone_names = []
@@ -103,7 +104,7 @@ def build_current_palette_segment(proxy_armature, part_row_count):
 
         bind_matrix = resolve_bind_matrix_for_export(pose_bone, bind_fallback_bone_names)
         skin_matrix = pose_bone.matrix.copy() @ bind_matrix.inverted()
-        skin_matrix_in_game_space = convert_matrix_from_blender_to_game(skin_matrix)
+        skin_matrix_in_game_space = convert_matrix_from_blender_to_game(skin_matrix, correction_mode)
         current_palette_segment[row_base:row_base + 3] = convert_matrix_to_palette_rows(skin_matrix_in_game_space)
         used_slot_ids.append(slot_id)
         exported_bone_metadata.append(
@@ -132,6 +133,7 @@ def build_runtime_export_plan(proxy_armature):
     overflow_bone_names = []
     bind_fallback_bone_names = []
     slot_count = 0
+    correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
 
     for pose_bone in list_exportable_proxy_pose_bones(proxy_armature):
         slot_id = int(pose_bone.bi_slot_id)
@@ -166,6 +168,7 @@ def build_runtime_export_plan(proxy_armature):
         "slot_count": slot_count,
         "frame_template_rows": build_identity_buffer_rows(slot_count * 3),
         "runtime_entries": runtime_entries,
+        "correction_mode": correction_mode,
         "exported_bone_metadata": exported_bone_metadata,
         "overflow_bone_names": overflow_bone_names,
         "bind_fallback_bones": bind_fallback_bone_names,
@@ -176,9 +179,10 @@ def build_runtime_export_plan(proxy_armature):
 def build_dense_runtime_frame_rows(export_plan):
     """Build one dense [slot][row] frame from the current pose using a cached export plan."""
     frame_rows = list(export_plan["frame_template_rows"])
+    correction_mode = export_plan.get("correction_mode")
     for runtime_entry in export_plan["runtime_entries"]:
         skin_matrix = runtime_entry["pose_bone"].matrix.copy() @ runtime_entry["bind_inverse"]
-        skin_matrix_in_game_space = convert_matrix_from_blender_to_game(skin_matrix)
+        skin_matrix_in_game_space = convert_matrix_from_blender_to_game(skin_matrix, correction_mode)
         dense_row_base = runtime_entry["dense_row_base"]
         frame_rows[dense_row_base:dense_row_base + 3] = convert_matrix_to_palette_rows(skin_matrix_in_game_space)
     return frame_rows
@@ -252,6 +256,7 @@ def build_palette_export_patch(proxy_armature):
         "part_size": layout_settings["part_row_count"],
         "previous_base": layout_settings["previous_part_base"],
         "previous_offset": layout_settings["previous_frame_row_offset"],
+        "buffer_correction_mode": correction_mode,
         "armature_name": proxy_armature.name,
         "source_mesh": getattr(proxy_armature, "bi_source_mesh_name", ""),
         "exported_bones": current_palette_build["exported_bone_metadata"],

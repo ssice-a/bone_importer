@@ -54,6 +54,7 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
             binding_box = workflow_box.box()
             binding_box.label(text="Part Binding", icon="LINKED")
             binding_box.prop(proxy_armature, "bi_part_id")
+            binding_box.prop(proxy_armature, "bi_buffer_correction_mode")
             if proxy_armature.bi_part_id >= 0:
                 part_layout = build_part_layout_from_id(proxy_armature.bi_part_id)
                 slot_capacity = calculate_slot_capacity_for_part_size(part_layout["part_size"])
@@ -90,8 +91,8 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         static_box.prop(scene, "bi_import_segment")
 
         animation_box = workflow_box.box()
-        animation_box.label(text="Runtime Buffer Export", icon="ACTION")
-        animation_box.label(text="Set Start = End to export one static frame.", icon="INFO")
+        animation_box.label(text="Runtime TQ Export", icon="ACTION")
+        animation_box.label(text="Uses scene.frame_set() per frame and exports TQ + bind + meta.", icon="INFO")
         animation_box.prop(scene, "bi_animation_output_dir")
         frame_row = animation_box.row(align=True)
         frame_row.prop(scene, "bi_animation_frame_start")

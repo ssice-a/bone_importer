@@ -77,27 +77,33 @@ class PaletteImportResult:
 
 @dataclass(frozen=True)
 class AnimationExportResult:
-    """Summary of exporting one dense animation buffer pair."""
+    """Summary of exporting one TQS animation buffer set."""
 
     armature_name: str
-    rows_path: str
+    tqs_path: str
+    bind_path: str
     meta_path: str
     frame_count: int
-    slot_count: int
-    exported_bones: int
+    bone_count: int
     metadata: dict
     debug_metadata_path: str = ""
 
 
 @dataclass(frozen=True)
 class BatchAnimationExportResult:
-    """Summary of exporting dense animation buffers for multiple proxy rigs."""
+    """Summary of exporting TQS animation buffers for multiple proxy rigs."""
 
     output_directory: str
     selected_armatures: int
     exported_armatures: int
     total_frames: int
     total_exported_bones: int
+    sampled_frames: int = 0
+    elapsed_seconds: float = 0.0
+    frame_set_seconds: float = 0.0
+    frame_write_seconds: float = 0.0
+    finalize_seconds: float = 0.0
+    other_seconds: float = 0.0
     failed_armatures: tuple[str, ...] = field(default_factory=tuple)
     exported_files: tuple[str, ...] = field(default_factory=tuple)
 

@@ -2,14 +2,16 @@
 
 from contextlib import ExitStack
 import os
+from time import perf_counter
 
 import bpy
 
 from ..constants import DEFAULT_PART_ROW_COUNT
 from .animation_export import (
+    build_tqs_frame_buffer,
     finalize_animation_export_job,
     prepare_animation_export_job,
-    write_dense_runtime_frame,
+    write_tqs_animation_frame,
 )
 from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
 from .context import (
@@ -301,7 +303,7 @@ def export_animation_for_proxy_armatures(
     fps,
     write_metadata=True,
 ):
-    """Export one dense animation buffer pair per proxy armature."""
+    """Export one scene-evaluated TQS animation set per proxy armature."""
     normalized_armatures = tuple(proxy_armatures)
     if not normalized_armatures:
         raise ValueError("No proxy armatures to export")
@@ -315,6 +317,18 @@ def export_animation_for_proxy_armatures(
     export_jobs = []
     scene = context.scene
     original_frame = scene.frame_current if scene is not None else 0
+    elapsed_seconds = 0.0
+    frame_set_seconds = 0.0
+    frame_write_seconds = 0.0
+    finalize_seconds = 0.0
+    other_seconds = 0.0
+    progress_started = False
+    progress_total = 0
+    progress_step = 0
+    progress_stride = 1
+    sampled_frames = 0
+    total_start_time = perf_counter()
+    window_manager = context.window_manager if context is not None else None
 
     try:
         for proxy_armature in normalized_armatures:
@@ -337,22 +351,45 @@ def export_animation_for_proxy_armatures(
 
         if export_jobs and scene is not None:
             exported_frames = export_jobs[0]["exported_frames"]
+            sampled_frames = len(exported_frames)
+            progress_total = max(len(exported_frames), 1)
+            progress_stride = max(1, progress_total // 200)
+            if window_manager is not None:
+                window_manager.progress_begin(0, progress_total)
+                progress_started = True
             with ExitStack() as stack:
                 active_jobs = []
                 for export_job in export_jobs:
-                    export_job["binary_file"] = stack.enter_context(open(export_job["rows_path"], "wb"))
+                    export_job["binary_file"] = stack.enter_context(open(export_job["tqs_path"], "wb"))
+                    export_job["frame_buffer"] = build_tqs_frame_buffer(export_job["export_entries"])
                     active_jobs.append(export_job)
 
                 for frame_number in exported_frames:
+                    frame_set_start_time = perf_counter()
                     scene.frame_set(frame_number)
+                    frame_set_seconds += perf_counter() - frame_set_start_time
+                    progress_step += 1
+                    if progress_started and (
+                        progress_step == progress_total
+                        or progress_step == 1
+                        or (progress_step % progress_stride) == 0
+                    ):
+                        window_manager.progress_update(progress_step)
+
+                    frame_write_start_time = perf_counter()
                     next_active_jobs = []
                     for export_job in active_jobs:
                         try:
-                            write_dense_runtime_frame(export_job["binary_file"], export_job["export_plan"])
+                            write_tqs_animation_frame(
+                                export_job["binary_file"],
+                                export_job["export_entries"],
+                                export_job["frame_buffer"],
+                            )
                         except Exception as exc:
                             failed_armatures.append(f"{export_job['proxy_armature'].name}: {exc}")
                             for cleanup_path in (
-                                export_job["rows_path"],
+                                export_job["tqs_path"],
+                                export_job["bind_path"],
                                 export_job["meta_path"],
                                 export_job["debug_metadata_path"],
                             ):
@@ -360,6 +397,7 @@ def export_animation_for_proxy_armatures(
                                     os.remove(cleanup_path)
                             continue
                         next_active_jobs.append(export_job)
+                    frame_write_seconds += perf_counter() - frame_write_start_time
                     active_jobs = next_active_jobs
                     if not active_jobs:
                         break
@@ -367,29 +405,48 @@ def export_animation_for_proxy_armatures(
             export_jobs = active_jobs
 
         for export_job in export_jobs:
+            finalize_start_time = perf_counter()
             try:
                 result = finalize_animation_export_job(export_job)
             except Exception as exc:
                 failed_armatures.append(f"{export_job['proxy_armature'].name}: {exc}")
                 for cleanup_path in (
-                    export_job["rows_path"],
+                    export_job["tqs_path"],
+                    export_job["bind_path"],
                     export_job["meta_path"],
                     export_job["debug_metadata_path"],
                 ):
                     if cleanup_path and os.path.exists(cleanup_path):
                         os.remove(cleanup_path)
                 continue
+            finally:
+                finalize_seconds += perf_counter() - finalize_start_time
 
             exported_armatures += 1
             total_frames += result.frame_count
-            total_exported_bones += result.exported_bones
-            exported_files += [result.rows_path, result.meta_path]
+            total_exported_bones += result.bone_count
+            exported_files += [result.tqs_path, result.bind_path, result.meta_path]
             if result.debug_metadata_path:
                 exported_files.append(result.debug_metadata_path)
     finally:
         if scene is not None:
             scene.frame_set(original_frame)
+        if progress_started:
+            window_manager.progress_end()
         restore_selection_state(context, selection_state)
+        elapsed_seconds = perf_counter() - total_start_time
+        other_seconds = max(
+            0.0,
+            elapsed_seconds - frame_set_seconds - frame_write_seconds - finalize_seconds,
+        )
+
+    print(
+        "[Bone Importer] Animation export finished in "
+        f"{elapsed_seconds:.2f}s | frame_set={frame_set_seconds:.2f}s"
+        f" | frame_write={frame_write_seconds:.2f}s | finalize={finalize_seconds:.2f}s"
+        f" | other={other_seconds:.2f}s | sampled_frames={sampled_frames}"
+        f" | selected={len(normalized_armatures)} | exported={exported_armatures}"
+    )
 
     return BatchAnimationExportResult(
         output_directory=bpy.path.abspath(output_directory or "//"),
@@ -397,6 +454,12 @@ def export_animation_for_proxy_armatures(
         exported_armatures=exported_armatures,
         total_frames=total_frames,
         total_exported_bones=total_exported_bones,
+        sampled_frames=sampled_frames,
+        elapsed_seconds=elapsed_seconds,
+        frame_set_seconds=frame_set_seconds,
+        frame_write_seconds=frame_write_seconds,
+        finalize_seconds=finalize_seconds,
+        other_seconds=other_seconds,
         failed_armatures=tuple(failed_armatures),
         exported_files=tuple(exported_files),
     )
