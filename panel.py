@@ -99,7 +99,8 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         frame_row.prop(scene, "bi_animation_frame_end")
         animation_box.prop(scene, "bi_animation_frame_step")
         animation_box.prop(scene, "bi_animation_fps")
-        animation_box.operator("object.bi_export_animation", icon="EXPORT")
+        animation_button_row = animation_box.row(align=True)
+        animation_button_row.operator("object.bi_export_animation", icon="EXPORT")
         animation_box.enabled = (
             (proxy_armature is not None and proxy_armature.bi_part_id >= 0)
             or selected_proxy_armature_count > 0

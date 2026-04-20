@@ -17,6 +17,8 @@ from .transform import BUFFER_CORRECTION_NONE, build_extra_blender_correction_ma
 INVALID_SLOT_ID = 0xFFFFFFFF
 ANIM_FLAG_PLAYING = 1
 ANIM_FLAG_LOOPING = 2
+TQ_FLOATS_PER_BONE = 8
+TQ_FRAME_STRIDE_BYTES_PER_BONE = TQ_FLOATS_PER_BONE * 4
 
 
 def normalize_animation_frame_range(frame_start, frame_end, frame_step):
@@ -66,21 +68,76 @@ def pack_slot_ids_uint4_rows(slot_ids):
     return packed_rows
 
 
-def build_initial_playback_state(frame_count):
-    """Return the initial previous/current frame pair expected by the runtime."""
-    safe_frame_count = max(int(frame_count), 1)
-    if safe_frame_count == 1:
-        return 0, 0
-    return 0, 1
+def read_animation_meta_uint4_rows(meta_path):
+    """Read raw uint4 meta rows from disk."""
+    if not os.path.exists(meta_path):
+        return ()
+
+    with open(meta_path, "rb") as meta_file:
+        payload = meta_file.read()
+
+    if len(payload) < 16 or (len(payload) % 16) != 0:
+        raise ValueError(f"Animation meta buffer is invalid: {meta_path}")
+
+    return tuple(
+        struct.unpack_from("<4I", payload, offset)
+        for offset in range(0, len(payload), 16)
+    )
 
 
-def build_animation_meta_uint4_rows(proxy_armature, frame_count, slot_ids, presents_per_step=1):
+def unpack_slot_ids_from_meta_rows(meta_rows, bone_count):
+    """Expand packed slot ids stored after the 4-row animation header."""
+    slot_ids = []
+    for packed_row in meta_rows[4:]:
+        slot_ids.extend(int(value) for value in packed_row)
+        if len(slot_ids) >= bone_count:
+            break
+    return tuple(slot_ids[:bone_count])
+
+
+def resolve_existing_animation_frame_count(tqs_path, bone_count):
+    """Derive the current clip frame count from the binary TQ file size."""
+    if not os.path.exists(tqs_path):
+        return 0
+
+    if bone_count <= 0:
+        raise ValueError("Bone count must be greater than zero")
+
+    frame_stride_bytes = int(bone_count) * TQ_FRAME_STRIDE_BYTES_PER_BONE
+    file_size = os.path.getsize(tqs_path)
+    if (file_size % frame_stride_bytes) != 0:
+        raise ValueError(
+            f"Animation buffer size {file_size} is not aligned to the expected frame stride {frame_stride_bytes}"
+        )
+    return file_size // frame_stride_bytes
+
+
+def load_existing_frame_numbers(debug_metadata_path, fallback_frame_count):
+    """Load stored source-frame numbers from debug metadata if it exists."""
+    if not os.path.exists(debug_metadata_path):
+        return list(range(int(fallback_frame_count)))
+
+    try:
+        with open(debug_metadata_path, "r", encoding="utf-8") as metadata_file:
+            metadata = json.load(metadata_file)
+    except Exception:
+        return list(range(int(fallback_frame_count)))
+
+    frame_numbers = metadata.get("frame_numbers")
+    if not isinstance(frame_numbers, list):
+        return list(range(int(fallback_frame_count)))
+    if len(frame_numbers) != int(fallback_frame_count):
+        return list(range(int(fallback_frame_count)))
+    return list(frame_numbers)
+
+
+def build_animation_meta_uint4_rows(proxy_armature, frame_count, slot_ids, fps, presents_per_step=1):
     """Pack runtime constants into uint4 rows for the TQ playback shaders."""
     normalized_slot_ids = tuple(int(slot_id) for slot_id in slot_ids)
     packed_slot_rows = pack_slot_ids_uint4_rows(normalized_slot_ids)
-    previous_frame, current_frame = build_initial_playback_state(frame_count)
     safe_frame_count = max(int(frame_count), 1)
     loop_end = safe_frame_count - 1
+    clip_fps = max(int(round(float(fps))), 1)
     header_rows = [
         (
             len(normalized_slot_ids),
@@ -92,11 +149,11 @@ def build_animation_meta_uint4_rows(proxy_armature, frame_count, slot_ids, prese
             int(getattr(proxy_armature, "bi_part_base", 0)),
             int(getattr(proxy_armature, "bi_previous_offset", 0)),
             int(getattr(proxy_armature, "bi_part_size", 0)),
-            int(getattr(proxy_armature, "bi_part_id", 0)),
+            clip_fps,
         ),
         (
-            int(previous_frame),
-            int(current_frame),
+            0,
+            0,
             0,
             int(ANIM_FLAG_PLAYING | ANIM_FLAG_LOOPING),
         ),
@@ -227,6 +284,7 @@ def prepare_animation_export_job(
         proxy_armature,
         frame_count=len(exported_frames),
         slot_ids=slot_ids,
+        fps=fps,
         presents_per_step=1,
     )
     metadata = {
@@ -254,13 +312,14 @@ def prepare_animation_export_job(
         ],
         "meta_layout_uint4": [
             ["bone_count", "frame_count", "reserved_rows", "slot_map_row_count"],
-            ["part_base", "previous_offset", "part_size", "part_id"],
-            ["previous_frame", "current_frame", "playback_tick", "flags"],
-            ["presents_per_step", "loop_start", "loop_end", "reserved"],
+            ["part_base", "previous_offset", "part_size", "clip_fps"],
+            ["previous_sample_tick", "current_sample_tick", "playback_tick", "flags"],
+            ["presents_per_step", "loop_start", "loop_end", "last_control_token"],
             ["packed_slot_ids...", "...", "...", "..."],
         ],
-        "initial_previous_frame": meta_rows[2][0],
-        "initial_current_frame": meta_rows[2][1],
+        "clip_fps": meta_rows[1][3],
+        "initial_previous_sample_tick": meta_rows[2][0],
+        "initial_current_sample_tick": meta_rows[2][1],
         "initial_playback_tick": meta_rows[2][2],
         "initial_flags": meta_rows[2][3],
         "presents_per_step": meta_rows[3][0],
@@ -278,6 +337,7 @@ def prepare_animation_export_job(
         "proxy_armature": proxy_armature,
         "export_entries": export_entries,
         "exported_frames": exported_frames,
+        "slot_ids": slot_ids,
         "tqs_path": tqs_path,
         "bind_path": bind_path,
         "meta_path": meta_path,
@@ -288,6 +348,36 @@ def prepare_animation_export_job(
         "frame_count": len(exported_frames),
         "bone_count": bone_count,
     }
+
+
+def validate_existing_animation_clip(export_job, existing_meta_rows, existing_frame_count):
+    """Ensure an existing clip is compatible with appending one more current-pose frame."""
+    if len(existing_meta_rows) < 4:
+        raise ValueError(f"Animation meta for {export_job['proxy_armature'].name} is missing required header rows")
+
+    expected_bone_count = int(export_job["bone_count"])
+    expected_slot_ids = tuple(int(slot_id) for slot_id in export_job["slot_ids"])
+    expected_target_row = tuple(int(value) for value in export_job["meta_rows"][1])
+
+    existing_bone_count = int(existing_meta_rows[0][0])
+    existing_frame_count_in_meta = int(existing_meta_rows[0][1])
+    existing_target_row = tuple(int(value) for value in existing_meta_rows[1])
+    existing_slot_ids = unpack_slot_ids_from_meta_rows(existing_meta_rows, existing_bone_count)
+
+    if existing_bone_count != expected_bone_count:
+        raise ValueError(
+            f"Existing clip bone count {existing_bone_count} does not match current export bone count {expected_bone_count}"
+        )
+    if existing_frame_count_in_meta != int(existing_frame_count):
+        raise ValueError(
+            f"Existing clip frame count mismatch: meta says {existing_frame_count_in_meta}, binary says {existing_frame_count}"
+        )
+    if existing_target_row != expected_target_row:
+        raise ValueError(
+            f"Existing clip target window {existing_target_row} does not match current proxy layout {expected_target_row}"
+        )
+    if existing_slot_ids != expected_slot_ids:
+        raise ValueError("Existing clip slot ids do not match the current proxy export plan")
 
 
 def finalize_animation_export_job(export_job):
