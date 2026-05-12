@@ -27,6 +27,7 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_buffer_size"),
     (bpy.types.Object, "bi_buffer_correction_mode"),
     (bpy.types.Scene, "bi_output_path"),
+    (bpy.types.Scene, "bi_export_collection"),
     (bpy.types.Scene, "bi_animation_output_dir"),
     (bpy.types.Scene, "bi_animation_clip_name"),
     (bpy.types.Scene, "bi_animation_clip_id"),
@@ -147,6 +148,14 @@ def register_addon_properties():
         default="//vst0_palette.bin",
         subtype="FILE_PATH",
         description="Binary output path for the exported VS-T0 palette.",
+    )
+    bpy.types.Scene.bi_export_collection = bpy.props.PointerProperty(
+        name="RX Export Collection",
+        type=bpy.types.Collection,
+        description=(
+            "Optional collection used as the export target source. Objects inside it resolve to their linked "
+            "proxy armatures; configured proxy parts and resolved base Position buffers define the exported resources."
+        ),
     )
     bpy.types.Scene.bi_animation_output_dir = bpy.props.StringProperty(
         name="Animation Dir",

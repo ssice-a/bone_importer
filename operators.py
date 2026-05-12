@@ -2,6 +2,7 @@
 
 import bpy
 
+from .core.collection_plan import proxy_armatures_from_export_collection
 from .core.context import find_proxy_armature_for_object, list_selected_proxy_armatures
 from .core.workflow import (
     clear_previous_palette_for_active_proxy,
@@ -15,6 +16,13 @@ from .core.workflow import (
     import_palette_for_selected_proxy_armatures,
     refresh_bind_for_selected_proxy_armatures,
 )
+
+
+def _has_export_collection_targets(context) -> bool:
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return False
+    return bool(proxy_armatures_from_export_collection(getattr(scene, "bi_export_collection", None)))
 
 
 class BI_OT_generate_proxy_rig(bpy.types.Operator):
@@ -96,7 +104,7 @@ class BI_OT_refresh_bind(bpy.types.Operator):
     def poll(cls, context):
         if find_proxy_armature_for_object(context.active_object) is not None:
             return True
-        return bool(list_selected_proxy_armatures(context))
+        return bool(list_selected_proxy_armatures(context)) or _has_export_collection_targets(context)
 
     def execute(self, context):
         try:
@@ -132,7 +140,7 @@ class BI_OT_export_palette(bpy.types.Operator):
             return False
         if find_proxy_armature_for_object(context.active_object) is not None:
             return True
-        return bool(list_selected_proxy_armatures(context))
+        return bool(list_selected_proxy_armatures(context)) or _has_export_collection_targets(context)
 
     def execute(self, context):
         try:
@@ -176,7 +184,7 @@ class BI_OT_export_animation(bpy.types.Operator):
             return False
         if find_proxy_armature_for_object(context.active_object) is not None:
             return True
-        return bool(list_selected_proxy_armatures(context))
+        return bool(list_selected_proxy_armatures(context)) or _has_export_collection_targets(context)
 
     def execute(self, context):
         scene = context.scene
@@ -248,7 +256,7 @@ class BI_OT_export_morph(bpy.types.Operator):
             return False
         if find_proxy_armature_for_object(context.active_object) is not None:
             return True
-        return bool(list_selected_proxy_armatures(context))
+        return bool(list_selected_proxy_armatures(context)) or _has_export_collection_targets(context)
 
     def execute(self, context):
         scene = context.scene

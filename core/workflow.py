@@ -17,6 +17,7 @@ from .animation_export import (
     write_tqs_animation_frame,
 )
 from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
+from .collection_plan import proxy_armatures_from_export_collection
 from .context import (
     apply_part_id_layout,
     capture_selection_state,
@@ -173,6 +174,14 @@ def generate_proxy_rigs_from_selected_meshes(context):
 
 def build_target_proxy_armatures(context):
     """Resolve target proxy armatures from direct selection first, then active object."""
+    scene = getattr(context, "scene", None)
+    export_collection = getattr(scene, "bi_export_collection", None) if scene is not None else None
+    if export_collection is not None:
+        collection_armatures = proxy_armatures_from_export_collection(export_collection)
+        if collection_armatures:
+            return collection_armatures
+        raise ValueError(f"RX Export Collection '{export_collection.name}' has no linked proxy armatures with Part Id")
+
     directly_selected_armatures = list_directly_selected_proxy_armatures(context)
     if len(directly_selected_armatures) > 1:
         return directly_selected_armatures

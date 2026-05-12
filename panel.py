@@ -3,6 +3,7 @@
 import bpy
 
 from .constants import RESERVED_PALETTE_ROWS
+from .core.collection_plan import count_collection_meshes, proxy_armatures_from_export_collection
 from .core.context import (
     build_part_layout_from_id,
     find_proxy_armature_for_object,
@@ -30,19 +31,32 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         selected_mesh_count = sum(1 for obj in context.selected_objects if obj.type == "MESH" and len(obj.vertex_groups) > 0)
         selected_proxy_armatures = list_selected_proxy_armatures(context)
         directly_selected_proxy_armatures = list_directly_selected_proxy_armatures(context)
+        export_collection = getattr(scene, "bi_export_collection", None)
+        collection_proxy_armatures = proxy_armatures_from_export_collection(export_collection)
+        collection_proxy_armature_count = len(collection_proxy_armatures)
         selected_proxy_armature_count = len(selected_proxy_armatures)
         direct_proxy_armature_count = len(directly_selected_proxy_armatures)
 
         workflow_box = layout.box()
         workflow_box.label(text="VS-T0 Proxy Workflow", icon="ARMATURE_DATA")
 
-        if active_object is None:
-            workflow_box.label(text="Select a mesh or proxy armature.", icon="INFO")
+        if active_object is None and export_collection is None:
+            workflow_box.label(text="Select a mesh/proxy armature or set an RX Export Collection.", icon="INFO")
             return
 
         info_box = workflow_box.box()
         info_box.label(text=f"Source Mesh: {source_mesh.name if source_mesh else 'None'}", icon="MESH_DATA")
         info_box.label(text=f"Proxy Armature: {proxy_armature.name if proxy_armature else 'None'}", icon="ARMATURE_DATA")
+
+        collection_box = workflow_box.box()
+        collection_box.label(text="RX Export Collection", icon="OUTLINER_COLLECTION")
+        collection_box.prop(scene, "bi_export_collection", text="Collection")
+        if export_collection is not None:
+            collection_box.label(
+                text=f"Meshes: {count_collection_meshes(export_collection)} | Proxy Parts: {collection_proxy_armature_count}",
+                icon="INFO",
+            )
+            collection_box.label(text="Collection decides membership; configured resources decide output parts.", icon="INFO")
 
         generate_row = workflow_box.row(align=True)
         generate_row.operator("object.bi_generate_proxy_rig", icon="ARMATURE_DATA")
@@ -86,6 +100,7 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         static_button_row.enabled = (
             (proxy_armature is not None and proxy_armature.bi_part_id >= 0)
             or selected_proxy_armature_count > 0
+            or collection_proxy_armature_count > 0
         )
         static_box.prop(scene, "bi_import_path")
         static_box.prop(scene, "bi_import_segment")
@@ -114,6 +129,7 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         animation_box.enabled = (
             (proxy_armature is not None and proxy_armature.bi_part_id >= 0)
             or selected_proxy_armature_count > 0
+            or collection_proxy_armature_count > 0
         )
 
         morph_box = workflow_box.box()
@@ -132,6 +148,7 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         morph_button_row.enabled = (
             (proxy_armature is not None and proxy_armature.bi_part_id >= 0)
             or selected_proxy_armature_count > 0
+            or collection_proxy_armature_count > 0
         )
 
         debug_box = workflow_box.box()
@@ -141,6 +158,8 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
 
         if direct_proxy_armature_count > 1:
             workflow_box.label(text=f"Direct Proxy Selection: {direct_proxy_armature_count}", icon="INFO")
+        elif collection_proxy_armature_count > 0:
+            workflow_box.label(text=f"Collection Proxy Parts: {collection_proxy_armature_count}", icon="INFO")
         elif selected_proxy_armature_count > 1:
             workflow_box.label(text=f"Resolved Proxy Selection: {selected_proxy_armature_count}", icon="INFO")
 

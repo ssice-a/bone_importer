@@ -3,7 +3,7 @@
 bl_info = {
     "name": "Bone Importer",
     "author": "OpenAI Codex",
-    "version": (0, 11, 0),
+    "version": (0, 12, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Bone Importer",
     "description": "Generate VS-T0 proxy bones and export standalone RX runtime bone+morph clips with shared timeline playback.",

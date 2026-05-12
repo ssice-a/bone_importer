@@ -12,6 +12,7 @@ _RESOURCE_POSITION_RE = re.compile(
     r"^(?P<prefix>Resource_(?P<hash>[0-9A-Fa-f]{8})_(?P<index_count>\d+)_\d+)_Position$"
 )
 _SOURCE_MESH_RE = re.compile(r"(?P<hash>[0-9A-Fa-f]{8})[-_](?P<index_count>\d+)(?:[-_]\d+)?")
+DEFAULT_REPLACEMENT_MATCH_PRIORITY = 50
 
 
 def resolve_generated_ini_path(output_directory: str, clip_name: str) -> str:
@@ -119,7 +120,7 @@ def _append_bone_texture_override(lines: list[str], export_result):
         _write_line(lines, "; match_index_count = ???")
     else:
         _write_line(lines, f"match_index_count = {inferred_match_index_count}")
-    _write_line(lines, "match_priority = -1000")
+    _write_line(lines, f"match_priority = {DEFAULT_REPLACEMENT_MATCH_PRIORITY}")
     _write_line(lines, "if $rx_anim_enable == 1")
     _write_line(lines, "    run = CustomShader_ExtractCB1")
     _write_line(lines, f"    cs-t2 = ResourceClipStatic_{mesh_key}")
@@ -158,7 +159,7 @@ def _append_morph_texture_override(lines: list[str], export_result, morph_result
         _write_line(lines, f"match_index_count = {inferred_match_index_count}")
     else:
         _write_line(lines, "; match_index_count = ???")
-    _write_line(lines, "match_priority = -1000")
+    _write_line(lines, f"match_priority = {DEFAULT_REPLACEMENT_MATCH_PRIORITY}")
     _write_line(lines, "if $rx_anim_enable == 1")
     if bundle is not None:
         _write_line(lines, "    handling = skip")
@@ -217,7 +218,7 @@ def _append_morph_only_texture_override(lines: list[str], morph_result):
         _write_line(lines, f"match_index_count = {bundle['match_index_count']}")
     else:
         _write_line(lines, "; match_index_count = ???")
-    _write_line(lines, "match_priority = -1000")
+    _write_line(lines, f"match_priority = {DEFAULT_REPLACEMENT_MATCH_PRIORITY}")
     _write_line(lines, "if $rx_anim_enable == 1")
     if bundle is not None:
         _write_line(lines, "    handling = skip")

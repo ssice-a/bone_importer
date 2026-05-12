@@ -11,6 +11,7 @@ import re
 import struct
 
 import bpy
+import numpy as np
 
 from .animation_export import (
     build_runtime_export_name_prefix,
@@ -151,7 +152,7 @@ def build_morph_manifest(clip_name: str, clip_id: int, mesh_results: tuple[Morph
         "shared_timeline_semantics": "uses_rx_anim_master_playback_v2",
         "per_mesh_playback_state": "none",
         "sample_window_source": "shared_master_playback.tick_to_sample_window",
-        "weight_sampling_mode": "evaluated_per_sample",
+        "weight_sampling_mode": "evaluated_per_sample_minus_baked_export_values",
         "normal_encoding_mode": "efmi_vb0_tbn_r10g10b10a2_uint",
         "tangent_strategy": "optional_key_1_targets_for_explicit_tangent_layouts",
         "vertex_order_requirement": "match_theherta_unique_vertex_order",
@@ -322,6 +323,56 @@ def encode_normal_to_efmi_packed_uint(
     packed_flag = 1 << 30
     sign_flag = (1 << 31) if tangent_sign >= 0.0 else 0
     return packed_x | (packed_y << 10) | (packed_z << 20) | packed_flag | sign_flag
+
+
+def _decode_signed_10_bit(raw_value: int) -> int:
+    normalized_value = int(raw_value) & 0x3FF
+    return normalized_value - 1024 if normalized_value >= 512 else normalized_value
+
+
+def decode_efmi_packed_normal_uint(packed_normal: int):
+    raw_x = int(packed_normal) & 0x3FF
+    raw_y = (int(packed_normal) >> 10) & 0x3FF
+    encoded_x = _decode_signed_10_bit(raw_x) / 511.0
+    encoded_y = _decode_signed_10_bit(raw_y) / 511.0
+    encoded_z = 1.0 - abs(encoded_x) - abs(encoded_y)
+    if encoded_z < 0.0:
+        old_x = encoded_x
+        encoded_x = (1.0 - abs(encoded_y)) * _sign_not_zero(old_x)
+        encoded_y = (1.0 - abs(old_x)) * _sign_not_zero(encoded_y)
+    return _normalize_vector3((encoded_x, encoded_y, encoded_z))
+
+
+def decode_efmi_packed_tangent_scalar(packed_normal: int) -> float:
+    raw_tangent = (int(packed_normal) >> 20) & 0x3FF
+    return max(-1.0, min(1.0, _decode_signed_10_bit(raw_tangent) / 511.0))
+
+
+def decode_efmi_packed_bitangent_sign(packed_normal: int) -> float:
+    return 1.0 if ((int(packed_normal) >> 31) & 1) else -1.0
+
+
+def encode_efmi_packed_uint_from_payload(normal_vector, tangent_scalar: float, bitangent_sign: float) -> int:
+    normalized_normal = _normalize_vector3(normal_vector)
+    l1_norm = abs(normalized_normal[0]) + abs(normalized_normal[1]) + abs(normalized_normal[2])
+    if l1_norm <= 1e-8:
+        encoded_x = 0.0
+        encoded_y = 0.0
+    else:
+        encoded_x = normalized_normal[0] / l1_norm
+        encoded_y = normalized_normal[1] / l1_norm
+        encoded_z = normalized_normal[2] / l1_norm
+        if encoded_z < 0.0:
+            old_x = encoded_x
+            encoded_x = (1.0 - abs(encoded_y)) * _sign_not_zero(old_x)
+            encoded_y = (1.0 - abs(old_x)) * _sign_not_zero(encoded_y)
+
+    packed_x = int(max(-511, min(511, round(encoded_x * 511.0)))) & 0x3FF
+    packed_y = int(max(-511, min(511, round(encoded_y * 511.0)))) & 0x3FF
+    packed_tangent = int(max(-511, min(511, round(max(-1.0, min(1.0, tangent_scalar)) * 511.0)))) & 0x3FF
+    packed_flag = 1 << 30
+    sign_flag = (1 << 31) if bitangent_sign >= 0.0 else 0
+    return packed_x | (packed_y << 10) | (packed_tangent << 20) | packed_flag | sign_flag
 
 
 def _pack_half2_uint(value_a: float, value_b: float) -> int:
@@ -560,61 +611,57 @@ def resolve_base_position_resource(output_directory: str, mesh_key: str):
 
 
 def _read_base_position_rows(buffer_path: str, stride: int):
-    """Read one TheHerta-exported base position buffer."""
+    """Read one TheHerta-exported base position buffer through the NumPy path."""
     with open(buffer_path, "rb") as buffer_file:
         raw_bytes = buffer_file.read()
     if stride <= 0 or (len(raw_bytes) % stride) != 0:
         raise ValueError(f"Base position buffer {buffer_path} has invalid length for stride {stride}")
 
-    base_rows = []
-    for byte_offset in range(0, len(raw_bytes), stride):
-        if stride == 16:
-            position_x, position_y, position_z, packed_normal = struct.unpack_from("<3fI", raw_bytes, byte_offset)
-            base_rows.append(
-                {
-                    "position": (float(position_x), float(position_y), float(position_z)),
-                    "packed_normal": int(packed_normal),
-                    "normal": None,
-                    "tangent": None,
-                }
-            )
-            continue
+    if stride == 16:
+        record_dtype = np.dtype(
+            {
+                "names": ["position", "packed_normal"],
+                "formats": [("<f4", (3,)), "<u4"],
+                "offsets": [0, 12],
+                "itemsize": 16,
+            }
+        )
+        records = np.frombuffer(raw_bytes, dtype=record_dtype)
+        return tuple(
+            {
+                "position": tuple(float(component) for component in record["position"]),
+                "packed_normal": int(record["packed_normal"]),
+                "normal": None,
+                "tangent": None,
+            }
+            for record in records
+        )
 
-        if stride >= 40:
-            (
-                position_x,
-                position_y,
-                position_z,
-                normal_x,
-                normal_y,
-                normal_z,
-                tangent_x,
-                tangent_y,
-                tangent_z,
-                tangent_w,
-            ) = struct.unpack_from("<10f", raw_bytes, byte_offset)
-            base_normal = (float(normal_x), float(normal_y), float(normal_z))
-            base_rows.append(
-                {
-                    "position": (float(position_x), float(position_y), float(position_z)),
-                    "packed_normal": encode_normal_to_efmi_packed_uint(
-                        base_normal,
-                        (float(tangent_x), float(tangent_y), float(tangent_z)),
-                        float(tangent_w),
-                    ),
-                    "normal": base_normal,
-                    "tangent": (
-                        float(tangent_x),
-                        float(tangent_y),
-                        float(tangent_z),
-                        float(tangent_w),
-                    ),
-                }
-            )
-            continue
+    if stride >= 40:
+        record_dtype = np.dtype(
+            {
+                "names": ["position", "normal", "tangent"],
+                "formats": [("<f4", (3,)), ("<f4", (3,)), ("<f4", (4,))],
+                "offsets": [0, 12, 24],
+                "itemsize": int(stride),
+            }
+        )
+        records = np.frombuffer(raw_bytes, dtype=record_dtype)
+        return tuple(
+            {
+                "position": tuple(float(component) for component in record["position"]),
+                "packed_normal": encode_normal_to_efmi_packed_uint(
+                    record["normal"],
+                    record["tangent"][:3],
+                    float(record["tangent"][3]),
+                ),
+                "normal": tuple(float(component) for component in record["normal"]),
+                "tangent": tuple(float(component) for component in record["tangent"]),
+            }
+            for record in records
+        )
 
-        raise ValueError(f"Unsupported base Position stride {stride} for {buffer_path}")
-    return tuple(base_rows)
+    raise ValueError(f"Unsupported base Position stride {stride} for {buffer_path}")
 
 
 def _build_influence_rows(base_rows, channel_names, channel_targets_by_name, include_normals: bool, include_tangents: bool):
@@ -624,15 +671,19 @@ def _build_influence_rows(base_rows, channel_names, channel_targets_by_name, inc
     for channel_index, channel_name in enumerate(channel_names):
         target_payload = channel_targets_by_name[channel_name]
         target_positions = target_payload["positions"]
+        delta_positions = target_payload.get("delta_positions")
         target_normals = target_payload["packed_normals"]
         target_tangents = target_payload["tangents"]
         for vertex_index, base_row in enumerate(base_rows):
-            target_position = target_positions[vertex_index]
-            delta_position = (
-                target_position[0] - base_row["position"][0],
-                target_position[1] - base_row["position"][1],
-                target_position[2] - base_row["position"][2],
-            )
+            if delta_positions is None:
+                target_position = target_positions[vertex_index]
+                delta_position = (
+                    target_position[0] - base_row["position"][0],
+                    target_position[1] - base_row["position"][1],
+                    target_position[2] - base_row["position"][2],
+                )
+            else:
+                delta_position = delta_positions[vertex_index]
             target_packed_normal = target_normals[vertex_index]
             target_tangent = target_tangents[vertex_index]
             tangent_changed = bool(
@@ -785,6 +836,83 @@ def _resolve_exported_channel_names(
     return tuple(exported_names), tuple(filtered_weights)
 
 
+def _subtract_baked_channel_values(sampled_weights, channel_names, baked_values_by_name):
+    baked_values = tuple(float(baked_values_by_name.get(channel_name, 0.0)) for channel_name in channel_names)
+    delta_rows = []
+    for sample_weights in sampled_weights:
+        delta_rows.append(
+            tuple(float(weight) - baked_values[channel_index] for channel_index, weight in enumerate(sample_weights))
+        )
+    return tuple(delta_rows), baked_values
+
+
+def _subtract_positions(positions_at_one, positions_at_zero):
+    return tuple(
+        (
+            float(one_position[0]) - float(zero_position[0]),
+            float(one_position[1]) - float(zero_position[1]),
+            float(one_position[2]) - float(zero_position[2]),
+        )
+        for one_position, zero_position in zip(positions_at_one, positions_at_zero)
+    )
+
+
+def _build_virtual_packed_normals(base_rows, packed_normals_at_zero, packed_normals_at_one):
+    virtual_normals = []
+    for base_row, normal_at_zero, normal_at_one in zip(base_rows, packed_normals_at_zero, packed_normals_at_one):
+        base_normal = decode_efmi_packed_normal_uint(base_row["packed_normal"])
+        zero_normal = decode_efmi_packed_normal_uint(normal_at_zero)
+        one_normal = decode_efmi_packed_normal_uint(normal_at_one)
+        virtual_normal = _normalize_vector3(
+            (
+                base_normal[0] + one_normal[0] - zero_normal[0],
+                base_normal[1] + one_normal[1] - zero_normal[1],
+                base_normal[2] + one_normal[2] - zero_normal[2],
+            ),
+            fallback=base_normal,
+        )
+
+        base_tangent_scalar = decode_efmi_packed_tangent_scalar(base_row["packed_normal"])
+        zero_tangent_scalar = decode_efmi_packed_tangent_scalar(normal_at_zero)
+        one_tangent_scalar = decode_efmi_packed_tangent_scalar(normal_at_one)
+        virtual_tangent_scalar = max(
+            -1.0,
+            min(1.0, base_tangent_scalar + one_tangent_scalar - zero_tangent_scalar),
+        )
+
+        base_sign = decode_efmi_packed_bitangent_sign(base_row["packed_normal"])
+        zero_sign = decode_efmi_packed_bitangent_sign(normal_at_zero)
+        one_sign = decode_efmi_packed_bitangent_sign(normal_at_one)
+        virtual_sign = base_sign + one_sign - zero_sign
+
+        virtual_normals.append(
+            encode_efmi_packed_uint_from_payload(
+                virtual_normal,
+                virtual_tangent_scalar,
+                1.0 if virtual_sign >= 0.0 else -1.0,
+            )
+        )
+    return tuple(virtual_normals)
+
+
+def _build_virtual_tangents(base_rows, tangents_at_zero, tangents_at_one):
+    virtual_tangents = []
+    for base_row, zero_tangent, one_tangent in zip(base_rows, tangents_at_zero, tangents_at_one):
+        base_tangent = base_row.get("tangent")
+        if base_tangent is None:
+            virtual_tangents.append(one_tangent)
+            continue
+        virtual_tangents.append(
+            (
+                float(base_tangent[0]) + float(one_tangent[0]) - float(zero_tangent[0]),
+                float(base_tangent[1]) + float(one_tangent[1]) - float(zero_tangent[1]),
+                float(base_tangent[2]) + float(one_tangent[2]) - float(zero_tangent[2]),
+                float(base_tangent[3]) + float(one_tangent[3]) - float(zero_tangent[3]),
+            )
+        )
+    return tuple(virtual_tangents)
+
+
 def export_morph_mesh_for_proxy_armature(
     context,
     proxy_armature,
@@ -816,9 +944,9 @@ def export_morph_mesh_for_proxy_armature(
     mesh_key = build_runtime_export_name_prefix(proxy_armature)
     original_frame = scene.frame_current
 
-    with _preserve_shape_key_values(source_mesh):
+    with _preserve_shape_key_values(source_mesh) as baked_shape_key_values:
         try:
-            exported_channel_names, sampled_weights = _resolve_exported_channel_names(
+            exported_channel_names, sampled_absolute_weights = _resolve_exported_channel_names(
                 scene,
                 source_mesh,
                 exported_frames,
@@ -826,8 +954,15 @@ def export_morph_mesh_for_proxy_armature(
             )
             if not exported_channel_names:
                 return None
+            sampled_delta_weights, baked_channel_values = _subtract_baked_channel_values(
+                sampled_absolute_weights,
+                exported_channel_names,
+                baked_shape_key_values,
+            )
 
             scene.frame_set(exported_frames[0])
+            _set_shape_key_values(source_mesh, baked_shape_key_values)
+            bpy.context.view_layer.update()
             with _evaluated_mesh_without_armature(source_mesh) as reference_mesh:
                 representative_loop_indices = _build_theherta_like_unique_loop_indices(reference_mesh)
 
@@ -866,6 +1001,13 @@ def export_morph_mesh_for_proxy_armature(
 
             channel_targets_by_name = {}
             all_zero_values = {channel_name: 0.0 for channel_name in exportable_shape_keys}
+            _set_shape_key_values(source_mesh, all_zero_values)
+            bpy.context.view_layer.update()
+            with _evaluated_mesh_without_armature(source_mesh) as zero_mesh:
+                positions_at_zero, packed_normals_at_zero, tangents_at_zero = _capture_unique_vertex_targets(
+                    zero_mesh,
+                    representative_loop_indices,
+                )
             for channel_name in exported_channel_names:
                 channel_values = dict(all_zero_values)
                 channel_values[channel_name] = 1.0
@@ -876,10 +1018,22 @@ def export_morph_mesh_for_proxy_armature(
                         target_mesh,
                         representative_loop_indices,
                     )
+                delta_positions = _subtract_positions(positions_at_one, positions_at_zero)
+                virtual_packed_normals = _build_virtual_packed_normals(
+                    base_rows,
+                    packed_normals_at_zero,
+                    packed_normals_at_one,
+                )
+                virtual_tangents = _build_virtual_tangents(
+                    base_rows,
+                    tangents_at_zero,
+                    tangents_at_one,
+                )
                 channel_targets_by_name[channel_name] = {
                     "positions": positions_at_one,
-                    "packed_normals": packed_normals_at_one,
-                    "tangents": tangents_at_one,
+                    "delta_positions": delta_positions,
+                    "packed_normals": virtual_packed_normals,
+                    "tangents": virtual_tangents,
                 }
 
             static_rows, influence_count, _max_influences, influence_row_stride = _build_influence_rows(
@@ -890,7 +1044,7 @@ def export_morph_mesh_for_proxy_armature(
                 include_tangents=resolved_include_tangents,
             )
             anim_rows, rows_per_sample = _build_morph_anim_rows(
-                sampled_weights,
+                sampled_delta_weights,
                 channel_count=len(exported_channel_names),
                 clip_id=clip_id,
                 source_frame_start=frame_start,
@@ -918,6 +1072,11 @@ def export_morph_mesh_for_proxy_armature(
                 "sample_count": len(exported_frames),
                 "channel_mode": str(channel_mode),
                 "channel_names": list(exported_channel_names),
+                "weight_semantics": "delta_from_baked_shape_key_values",
+                "baked_channel_values": {
+                    channel_name: float(baked_channel_values[channel_index])
+                    for channel_index, channel_name in enumerate(exported_channel_names)
+                },
                 "vertex_count": len(base_rows),
                 "influence_count": int(influence_count),
                 "rows_per_sample": int(rows_per_sample),
