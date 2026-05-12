@@ -8,6 +8,7 @@ import bpy
 
 from ..constants import DEFAULT_PART_ROW_COUNT
 from .animation_export import (
+    build_runtime_export_name_prefix,
     build_tqs_frame_buffer,
     finalize_animation_export_job,
     normalize_clip_name,
@@ -17,7 +18,11 @@ from .animation_export import (
     write_tqs_animation_frame,
 )
 from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
-from .collection_plan import proxy_armatures_from_export_collection
+from .collection_plan import (
+    CB1_OVERRIDE_NONE,
+    cb1_override_by_proxy_armature_name_from_collection,
+    proxy_armatures_from_export_collection,
+)
 from .context import (
     apply_part_id_layout,
     capture_selection_state,
@@ -197,6 +202,24 @@ def build_target_proxy_armatures(context):
     raise ValueError("No selected proxy armatures with Part Id found")
 
 
+def build_cb1_override_by_mesh_key(context, proxy_armatures):
+    """Resolve collection-level CB1 override settings for generated ini snippets."""
+    scene = getattr(context, "scene", None)
+    export_collection = getattr(scene, "bi_export_collection", None) if scene is not None else None
+    if export_collection is None:
+        return {}
+
+    override_by_proxy_name = cb1_override_by_proxy_armature_name_from_collection(export_collection)
+    override_by_mesh_key = {}
+    for proxy_armature in proxy_armatures:
+        proxy_name = str(getattr(proxy_armature, "name_full", getattr(proxy_armature, "name", "")) or "")
+        cb1_override = override_by_proxy_name.get(proxy_name, CB1_OVERRIDE_NONE)
+        if cb1_override == CB1_OVERRIDE_NONE:
+            continue
+        override_by_mesh_key[build_runtime_export_name_prefix(proxy_armature)] = cb1_override
+    return override_by_mesh_key
+
+
 def refresh_bind_for_proxy_armature(proxy_armature):
     """Refresh bind matrices for one proxy armature."""
     if proxy_armature is None:
@@ -361,6 +384,7 @@ def export_animation_for_proxy_armatures(
     exported_morph_meshes = 0
     total_morph_channels = 0
     morph_results = []
+    cb1_override_by_mesh_key = build_cb1_override_by_mesh_key(context, normalized_armatures)
     total_start_time = perf_counter()
     window_manager = context.window_manager if context is not None else None
 
@@ -505,6 +529,7 @@ def export_animation_for_proxy_armatures(
                 clip_name=normalized_clip_name,
                 export_results=tuple(completed_results),
                 morph_results=tuple(morph_results),
+                cb1_override_by_mesh_key=cb1_override_by_mesh_key,
             )
         except Exception as exc:
             failed_armatures.append(f"{normalized_clip_name} generated ini: {exc}")
@@ -590,6 +615,7 @@ def export_morph_for_proxy_armatures(
     master_playback_path = ""
     sampled_frames = 0
     morph_results = []
+    cb1_override_by_mesh_key = build_cb1_override_by_mesh_key(context, normalized_armatures)
     total_start_time = perf_counter()
     scene = context.scene if context is not None else None
     original_frame = scene.frame_current if scene is not None else 0
@@ -692,6 +718,7 @@ def export_morph_for_proxy_armatures(
                     clip_name=normalized_clip_name,
                     export_results=(),
                     morph_results=tuple(morph_results),
+                    cb1_override_by_mesh_key=cb1_override_by_mesh_key,
                 )
             except Exception as exc:
                 failed_armatures.append(f"{normalized_clip_name} generated ini: {exc}")

@@ -751,34 +751,36 @@ def _build_influence_rows(base_rows, channel_names, channel_targets_by_name, inc
 def _build_morph_anim_rows(weight_rows_by_sample, channel_count, clip_id, source_frame_start, source_frame_step):
     """Pack sampled morph weights into uint4 rows."""
     weights_per_row = 8
+    sample_count = len(weight_rows_by_sample)
     rows_per_sample = max((max(channel_count, 1) + weights_per_row - 1) // weights_per_row, 1)
-    packed_payload_rows = []
-    for sample_weights in weight_rows_by_sample:
-        normalized_weights = list(sample_weights)
-        if channel_count == 0:
-            normalized_weights = []
-        for channel_offset in range(0, max(channel_count, 1), weights_per_row):
-            packed_weights = normalized_weights[channel_offset:channel_offset + weights_per_row]
-            while len(packed_weights) < weights_per_row:
-                packed_weights.append(0.0)
-            packed_payload_rows.append(
-                (
-                    _pack_half2_uint(packed_weights[0], packed_weights[1]),
-                    _pack_half2_uint(packed_weights[2], packed_weights[3]),
-                    _pack_half2_uint(packed_weights[4], packed_weights[5]),
-                    _pack_half2_uint(packed_weights[6], packed_weights[7]),
-                )
+    if channel_count <= 0:
+        weight_matrix = np.empty((sample_count, 0), dtype=np.float32)
+    else:
+        weight_matrix = np.asarray(weight_rows_by_sample, dtype=np.float32)
+        if weight_matrix.ndim == 1:
+            weight_matrix = weight_matrix.reshape((sample_count, channel_count))
+        if weight_matrix.shape != (sample_count, channel_count):
+            raise ValueError(
+                "Morph weight matrix shape does not match "
+                f"samples/channels ({weight_matrix.shape} != {(sample_count, channel_count)})"
             )
+
+    padded_channel_count = rows_per_sample * weights_per_row
+    padded_weights = np.zeros((sample_count, padded_channel_count), dtype="<f2")
+    if channel_count > 0 and sample_count > 0:
+        padded_weights[:, :channel_count] = weight_matrix
+    half_pairs = np.ascontiguousarray(padded_weights.reshape((-1, 2)), dtype="<f2")
+    packed_payload_rows = half_pairs.view("<u4").reshape((-1, 4))
     header_rows = build_morph_anim_header_uint4_rows(
         channel_count=channel_count,
-        sample_count=len(weight_rows_by_sample),
+        sample_count=sample_count,
         clip_id=clip_id,
         source_frame_start=source_frame_start,
         source_frame_step=source_frame_step,
         baked_weight_row_count=len(packed_payload_rows),
         weights_per_row=weights_per_row,
     )
-    return header_rows + packed_payload_rows, rows_per_sample
+    return np.vstack((np.asarray(header_rows, dtype="<u4"), packed_payload_rows)), rows_per_sample
 
 
 def _list_exportable_shape_keys(source_mesh):
@@ -796,14 +798,15 @@ def _list_exportable_shape_keys(source_mesh):
 
 def _sample_shape_key_weights(scene, source_mesh, channel_names, exported_frames):
     """Sample evaluated shape-key weights at the exported sample points."""
+    sampled_weights = np.empty((len(exported_frames), len(channel_names)), dtype=np.float32)
     if not channel_names:
-        return tuple(() for _ in exported_frames)
+        return sampled_weights
     key_blocks = source_mesh.data.shape_keys.key_blocks
-    sampled_weights = []
-    for frame_number in exported_frames:
+    for sample_index, frame_number in enumerate(exported_frames):
         scene.frame_set(frame_number)
-        sampled_weights.append(tuple(float(key_blocks[channel_name].value) for channel_name in channel_names))
-    return tuple(sampled_weights)
+        for channel_index, channel_name in enumerate(channel_names):
+            sampled_weights[sample_index, channel_index] = float(key_blocks[channel_name].value)
+    return sampled_weights
 
 
 def _resolve_exported_channel_names(
@@ -821,40 +824,28 @@ def _resolve_exported_channel_names(
     if channel_mode == MORPH_CHANNEL_MODE_ALL:
         return exportable_names, sampled_weights
 
-    exported_names = []
-    exported_indices = []
-    for channel_index, channel_name in enumerate(exportable_names):
-        channel_min = min(sample_weights[channel_index] for sample_weights in sampled_weights)
-        channel_max = max(sample_weights[channel_index] for sample_weights in sampled_weights)
-        if (channel_max - channel_min) > MORPH_WEIGHT_EPSILON:
-            exported_names.append(channel_name)
-            exported_indices.append(channel_index)
+    if sampled_weights.size == 0:
+        return (), sampled_weights
 
-    filtered_weights = []
-    for sample_weights in sampled_weights:
-        filtered_weights.append(tuple(sample_weights[channel_index] for channel_index in exported_indices))
-    return tuple(exported_names), tuple(filtered_weights)
+    channel_ranges = sampled_weights.max(axis=0) - sampled_weights.min(axis=0)
+    exported_indices = np.flatnonzero(channel_ranges > MORPH_WEIGHT_EPSILON)
+    exported_names = tuple(exportable_names[int(channel_index)] for channel_index in exported_indices)
+    return exported_names, sampled_weights[:, exported_indices]
 
 
 def _subtract_baked_channel_values(sampled_weights, channel_names, baked_values_by_name):
-    baked_values = tuple(float(baked_values_by_name.get(channel_name, 0.0)) for channel_name in channel_names)
-    delta_rows = []
-    for sample_weights in sampled_weights:
-        delta_rows.append(
-            tuple(float(weight) - baked_values[channel_index] for channel_index, weight in enumerate(sample_weights))
-        )
-    return tuple(delta_rows), baked_values
+    baked_values = np.asarray(
+        [float(baked_values_by_name.get(channel_name, 0.0)) for channel_name in channel_names],
+        dtype=np.float32,
+    )
+    weight_matrix = np.asarray(sampled_weights, dtype=np.float32)
+    if baked_values.size == 0:
+        return weight_matrix.reshape((len(sampled_weights), 0)), ()
+    return weight_matrix - baked_values.reshape((1, -1)), tuple(float(value) for value in baked_values)
 
 
 def _subtract_positions(positions_at_one, positions_at_zero):
-    return tuple(
-        (
-            float(one_position[0]) - float(zero_position[0]),
-            float(one_position[1]) - float(zero_position[1]),
-            float(one_position[2]) - float(zero_position[2]),
-        )
-        for one_position, zero_position in zip(positions_at_one, positions_at_zero)
-    )
+    return np.asarray(positions_at_one, dtype=np.float32) - np.asarray(positions_at_zero, dtype=np.float32)
 
 
 def _build_virtual_packed_normals(base_rows, packed_normals_at_zero, packed_normals_at_one):

@@ -2,9 +2,9 @@
 
 import json
 import os
-from array import array
 
 import bpy
+import numpy as np
 
 from .models import LoadedPaletteFile
 
@@ -37,11 +37,18 @@ def write_palette_package_to_disk(package, output_path, armature_name, write_met
     if output_directory:
         os.makedirs(output_directory, exist_ok=True)
 
-    flat_float_values = array("f")
-    for row in package["buffer_rows"]:
-        flat_float_values.extend(row)
+    row_array = np.asarray(package["buffer_rows"], dtype="<f4")
+    if row_array.size == 0:
+        row_array = np.empty((0, 4), dtype="<f4")
+    elif row_array.ndim == 1:
+        if row_array.size % 4 != 0:
+            raise ValueError("Palette package rows are not divisible by float4")
+        row_array = row_array.reshape((-1, 4))
+    elif row_array.ndim != 2 or row_array.shape[1] != 4:
+        raise ValueError("Palette package rows must have shape (n, 4)")
+    row_array = np.ascontiguousarray(row_array, dtype="<f4")
     with open(binary_path, "wb") as binary_file:
-        flat_float_values.tofile(binary_file)
+        row_array.tofile(binary_file)
 
     if write_metadata:
         with open(metadata_path, "w", encoding="utf-8") as metadata_file:
@@ -61,14 +68,22 @@ def ensure_palette_binary_file(binary_path, buffer_row_count):
     if output_directory:
         os.makedirs(output_directory, exist_ok=True)
 
+    identity_rows = np.asarray(IDENTITY_ROW_VALUES, dtype="<f4").reshape((3, 4))
     full_identity_rows = int(buffer_row_count) // 3
     remainder_row_count = int(buffer_row_count) % 3
-    flat_float_values = array("f", IDENTITY_ROW_VALUES * full_identity_rows)
+    row_chunks = []
+    if full_identity_rows:
+        row_chunks.append(np.tile(identity_rows, (full_identity_rows, 1)))
     if remainder_row_count:
-        flat_float_values.extend(IDENTITY_ROW_VALUES[: remainder_row_count * 4])
+        row_chunks.append(identity_rows[:remainder_row_count])
+    row_array = (
+        np.ascontiguousarray(np.vstack(row_chunks), dtype="<f4")
+        if row_chunks
+        else np.empty((0, 4), dtype="<f4")
+    )
 
     with open(binary_path, "wb") as binary_file:
-        flat_float_values.tofile(binary_file)
+        row_array.tofile(binary_file)
 
 
 def write_palette_row_patches_to_disk(
@@ -85,13 +100,18 @@ def write_palette_row_patches_to_disk(
 
     with open(binary_path, "r+b") as binary_file:
         for row_start, rows in row_patches:
-            if not rows:
+            if rows is None or len(rows) == 0:
                 continue
-            flat_float_values = array("f")
-            for row in rows:
-                flat_float_values.extend(row)
+            row_array = np.asarray(rows, dtype="<f4")
+            if row_array.ndim == 1:
+                if row_array.size % 4 != 0:
+                    raise ValueError("Palette patch rows are not divisible by float4")
+                row_array = row_array.reshape((-1, 4))
+            elif row_array.ndim != 2 or row_array.shape[1] != 4:
+                raise ValueError("Palette patch rows must have shape (n, 4)")
+            row_array = np.ascontiguousarray(row_array, dtype="<f4")
             binary_file.seek(int(row_start) * 16)
-            flat_float_values.tofile(binary_file)
+            row_array.tofile(binary_file)
 
     if write_metadata:
         with open(metadata_path, "w", encoding="utf-8") as metadata_file:
@@ -102,12 +122,10 @@ def write_palette_row_patches_to_disk(
 
 def convert_flat_float_values_to_rows(flat_float_values):
     """把拍平的 float 序列还原成 float4 行列表。"""
-    if len(flat_float_values) % 4 != 0:
+    flat_array = np.asarray(flat_float_values, dtype="<f4")
+    if flat_array.size % 4 != 0:
         raise ValueError("Palette binary does not contain a whole number of float4 rows")
-    return [
-        tuple(float(flat_float_values[index + offset]) for offset in range(4))
-        for index in range(0, len(flat_float_values), 4)
-    ]
+    return [tuple(float(value) for value in row) for row in flat_array.reshape((-1, 4))]
 
 
 def read_palette_rows_from_file(binary_path):
@@ -117,8 +135,7 @@ def read_palette_rows_from_file(binary_path):
 
 def read_palette_rows_in_range(binary_path, row_start=0, row_count=None):
     """只读取指定范围内的 float4 行，避免导入时把整块大缓冲都读进来。"""
-    flat_float_values = array("f")
-    item_byte_size = flat_float_values.itemsize
+    item_byte_size = np.dtype("<f4").itemsize
     file_size = os.path.getsize(binary_path)
     if file_size % (item_byte_size * 4) != 0:
         raise ValueError("Palette binary does not contain a whole number of float4 rows")
@@ -138,7 +155,7 @@ def read_palette_rows_in_range(binary_path, row_start=0, row_count=None):
 
     with open(binary_path, "rb") as binary_file:
         binary_file.seek(normalized_row_start * 4 * item_byte_size)
-        flat_float_values.fromfile(binary_file, normalized_row_count * 4)
+        flat_float_values = np.fromfile(binary_file, dtype="<f4", count=normalized_row_count * 4)
     return convert_flat_float_values_to_rows(flat_float_values)
 
 

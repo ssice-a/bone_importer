@@ -7,6 +7,7 @@ from .constants import (
     DEFAULT_PART_ROW_COUNT,
     DEFAULT_PREVIOUS_FRAME_ROW_OFFSET,
 )
+from .core.collection_plan import CB1_OVERRIDE_INHERIT, CB1_OVERRIDE_ITEMS
 from .core.transform import BUFFER_CORRECTION_ITEMS, BUFFER_CORRECTION_NONE
 
 
@@ -26,6 +27,7 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_previous_offset"),
     (bpy.types.Object, "bi_buffer_size"),
     (bpy.types.Object, "bi_buffer_correction_mode"),
+    (bpy.types.Collection, "bi_cb1_override"),
     (bpy.types.Scene, "bi_output_path"),
     (bpy.types.Scene, "bi_export_collection"),
     (bpy.types.Scene, "bi_animation_output_dir"),
@@ -141,6 +143,15 @@ def register_addon_properties():
         items=BUFFER_CORRECTION_ITEMS,
         default=BUFFER_CORRECTION_NONE,
         description="Optional extra correction used by special buffers such as eyelashes.",
+    )
+    bpy.types.Collection.bi_cb1_override = bpy.props.EnumProperty(
+        name="RX CB1 Override",
+        items=CB1_OVERRIDE_ITEMS,
+        default=CB1_OVERRIDE_INHERIT,
+        description=(
+            "Collection-level special cb1 flag override used by generated RX ini snippets. "
+            "Use Eyelash only for collection-backed eyelash/eye draw groups that need cb1[4].w patched."
+        ),
     )
 
     bpy.types.Scene.bi_output_path = bpy.props.StringProperty(

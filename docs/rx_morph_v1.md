@@ -189,3 +189,30 @@ The intended runtime order remains:
 4. apply the existing bone skinning path through `FakeT0/FakeCB1`
 
 This keeps shape keys in pre-skin local space, which matches standard authoring semantics.
+
+## NumPy / NPY Performance Policy
+
+Large homogeneous numeric data should use NumPy first. In this project, "npy optimization" means both in-memory NumPy vectorization and, where it helps repeated work, optional `.npy` intermediate caches. Pure Python loops are acceptable for Blender API calls, control flow, metadata, and small lists, but should not be the default for large per-vertex, per-bone, per-channel, or per-sample buffers.
+
+Rules for future work:
+
+- Prefer `numpy.frombuffer`, `numpy.fromfile`, `numpy.asarray`, vectorized math, and `ndarray.tofile` for binary buffer IO.
+- Prefer fixed dtypes such as `<f4`, `<u4`, `<u2`, and structured dtypes for EFMI vertex layouts.
+- Prefer array-shaped data internally, for example `[vertex, component]`, `[sample, channel]`, `[bone, row, component]`.
+- Do not add slow Python fallbacks for hot numeric paths unless Blender API limitations make NumPy impossible.
+- `.npy` caches are allowed for expensive intermediate data, but must be treated as rebuildable cache files, not runtime artifacts.
+- Cache files must include enough metadata or naming context to avoid stale reuse across mesh key, stride, vertex count, channel list, frame range, or format changes.
+- Runtime `.buf` formats remain unchanged; NumPy is an exporter implementation detail.
+
+Current and planned NumPy candidates:
+
+- Done: read TheHerta base Position buffers with NumPy structured dtypes for packed16 and PNTA40 layouts.
+- Done: write `uint4` buffers through NumPy arrays instead of row-by-row `struct.pack`; this affects `morph_static`, `morph_anim`, `clip_static`, `timeline_static`, and `master_playback`.
+- Done: pack `morph_anim` weights as a `[sample, channel]` NumPy matrix, use vectorized min/max channel filtering, subtract baked values vectorized, convert to `float16`, and pack eight weights into each `uint4` row.
+- Done: read and write palette float4 rows with NumPy, including partial row patches through seek + `tofile`.
+- High priority: build morph position deltas, normal deltas, tangent deltas, and mismatch masks with NumPy arrays before emitting sparse influence rows.
+- Medium priority: vectorize EFMI packed-normal decode/encode helpers for arrays, while keeping scalar helpers only as compatibility wrappers.
+- Medium priority: keep TQS frame buffers as reusable NumPy `float32` arrays and write them directly, while accepting that Blender matrix decomposition itself stays Python/API-bound.
+- Medium priority: use `foreach_get` into NumPy arrays for evaluated mesh positions, loop normals, tangents, polygon loop ranges, and loop vertex indices wherever Blender exposes the data.
+- Medium priority: accelerate TheHerta-like unique vertex reconstruction by building structured byte keys from NumPy arrays, then only using Python for final ordered de-duplication if needed.
+- Low priority: use NumPy for debug bounds, vertex-group statistics, and batch centroid calculations when those tools become slow on large meshes.

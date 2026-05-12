@@ -52,11 +52,20 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         collection_box.label(text="RX Export Collection", icon="OUTLINER_COLLECTION")
         collection_box.prop(scene, "bi_export_collection", text="Collection")
         if export_collection is not None:
+            collection_box.prop(export_collection, "bi_cb1_override", text="Root CB1 Override")
             collection_box.label(
                 text=f"Meshes: {count_collection_meshes(export_collection)} | Proxy Parts: {collection_proxy_armature_count}",
                 icon="INFO",
             )
             collection_box.label(text="Collection decides membership; configured resources decide output parts.", icon="INFO")
+            child_collections = tuple(getattr(export_collection, "children", []) or ())
+            if child_collections:
+                child_box = collection_box.box()
+                child_box.label(text="Child CB1 Overrides", icon="OUTLINER_COLLECTION")
+                for child_collection in child_collections[:8]:
+                    child_box.prop(child_collection, "bi_cb1_override", text=child_collection.name)
+                if len(child_collections) > 8:
+                    child_box.label(text=f"{len(child_collections) - 8} more child collection(s) hidden.", icon="INFO")
 
         generate_row = workflow_box.row(align=True)
         generate_row.operator("object.bi_generate_proxy_rig", icon="ARMATURE_DATA")

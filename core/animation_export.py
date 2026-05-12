@@ -2,10 +2,10 @@
 
 import json
 import os
-import struct
 from array import array
 
 import bpy
+import numpy as np
 
 from ..constants import RESERVED_PALETTE_ROWS
 from .export import build_runtime_export_plan
@@ -197,9 +197,18 @@ def build_animation_static_uint4_rows(
 
 def write_uint4_buffer_rows(buffer_path, uint4_rows):
     """Write uint4 rows to disk for StructuredBuffer/RWStructuredBuffer use."""
+    row_array = np.asarray(uint4_rows, dtype="<u4")
+    if row_array.size == 0:
+        row_array = np.empty((0, 4), dtype="<u4")
+    elif row_array.ndim == 1:
+        if row_array.size % 4 != 0:
+            raise ValueError(f"uint4 buffer rows for {buffer_path} are not divisible by 4")
+        row_array = row_array.reshape((-1, 4))
+    elif row_array.ndim != 2 or row_array.shape[1] != 4:
+        raise ValueError(f"uint4 buffer rows for {buffer_path} must have shape (n, 4)")
+    row_array = np.ascontiguousarray(row_array, dtype="<u4")
     with open(buffer_path, "wb") as buffer_file:
-        for row in uint4_rows:
-            buffer_file.write(struct.pack("<4I", *(int(value) for value in row)))
+        row_array.tofile(buffer_file)
 
 
 def write_json_file(json_path, payload):
