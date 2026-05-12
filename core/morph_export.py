@@ -152,7 +152,7 @@ def build_morph_manifest(clip_name: str, clip_id: int, mesh_results: tuple[Morph
         "per_mesh_playback_state": "none",
         "sample_window_source": "shared_master_playback.tick_to_sample_window",
         "weight_sampling_mode": "evaluated_per_sample",
-        "normal_encoding_mode": "efmi_vb0_oct_r32_uint",
+        "normal_encoding_mode": "efmi_vb0_tbn_r10g10b10a2_uint",
         "tangent_strategy": "optional_key_1_targets_for_explicit_tangent_layouts",
         "vertex_order_requirement": "match_theherta_unique_vertex_order",
         "meshes": [
@@ -195,8 +195,77 @@ def _sign_not_zero(value: float) -> float:
     return 1.0 if value >= 0.0 else -1.0
 
 
-def encode_normal_to_efmi_packed_uint(normal_vector) -> int:
-    """Encode one float3 normal using the EFMI octahedral R32_UINT layout."""
+def _normalize_vector3(vector, fallback=(0.0, 0.0, 1.0)):
+    vector_x = float(vector[0])
+    vector_y = float(vector[1])
+    vector_z = float(vector[2])
+    vector_length = math.sqrt(vector_x * vector_x + vector_y * vector_y + vector_z * vector_z)
+    if vector_length <= 1e-8:
+        return (float(fallback[0]), float(fallback[1]), float(fallback[2]))
+    return (vector_x / vector_length, vector_y / vector_length, vector_z / vector_length)
+
+
+def _dot3(vector_a, vector_b) -> float:
+    return (
+        float(vector_a[0]) * float(vector_b[0])
+        + float(vector_a[1]) * float(vector_b[1])
+        + float(vector_a[2]) * float(vector_b[2])
+    )
+
+
+def _cross3(vector_a, vector_b):
+    return (
+        float(vector_a[1]) * float(vector_b[2]) - float(vector_a[2]) * float(vector_b[1]),
+        float(vector_a[2]) * float(vector_b[0]) - float(vector_a[0]) * float(vector_b[2]),
+        float(vector_a[0]) * float(vector_b[1]) - float(vector_a[1]) * float(vector_b[0]),
+    )
+
+
+def _encode_tangent_to_efmi_scalar(tangent_vector, normal_vector) -> float:
+    normalized_normal = _normalize_vector3(normal_vector)
+    normalized_tangent = _normalize_vector3(tangent_vector, fallback=(1.0, 0.0, 0.0))
+
+    reference_vector = (
+        normalized_normal[1] - normalized_normal[2],
+        normalized_normal[2] - normalized_normal[0],
+        normalized_normal[0] - normalized_normal[1],
+    )
+    reference_length = math.sqrt(_dot3(reference_vector, reference_vector))
+    if reference_length < 1e-6 or not math.isfinite(reference_length):
+        helper_axis = (1.0, 0.0, 0.0) if abs(normalized_normal[0]) < 0.9 else (0.0, 1.0, 0.0)
+        reference_vector = _normalize_vector3(_cross3(normalized_normal, helper_axis), fallback=(1.0, 0.0, 0.0))
+    else:
+        reference_vector = (
+            reference_vector[0] / reference_length,
+            reference_vector[1] / reference_length,
+            reference_vector[2] / reference_length,
+        )
+
+    bitangent_vector = _normalize_vector3(
+        _cross3(reference_vector, normalized_normal),
+        fallback=(0.0, 1.0, 0.0),
+    )
+
+    cos_theta = max(-1.0, min(1.0, _dot3(normalized_tangent, reference_vector)))
+    sin_theta = max(-1.0, min(1.0, _dot3(normalized_tangent, bitangent_vector)))
+
+    denominator = abs(cos_theta) + abs(sin_theta)
+    unit_tangent = (cos_theta / denominator) if denominator > 1e-8 else 0.0
+    encoded_tangent = 0.5 * (1.0 + unit_tangent)
+
+    sine_sign = 1.0 if sin_theta == 0.0 else _sign_not_zero(sin_theta)
+    return math.copysign(encoded_tangent, sine_sign)
+
+
+def encode_normal_to_efmi_packed_uint(
+    normal_vector,
+    tangent_vector=None,
+    bitangent_sign=1.0,
+    *,
+    flip_texcoord_v: bool = True,
+    flip_bitangent_sign: bool = True,
+) -> int:
+    """Encode one EFMI packed TBN uint from normal+tangent state."""
     normal_x = float(normal_vector[0])
     normal_y = float(normal_vector[1])
     normal_z = float(normal_vector[2])
@@ -226,9 +295,33 @@ def encode_normal_to_efmi_packed_uint(normal_vector) -> int:
 
     packed_x = int(max(-511, min(511, round(encoded_x * 511.0)))) & 0x3FF
     packed_y = int(max(-511, min(511, round(encoded_y * 511.0)))) & 0x3FF
-    packed_z = 0
+
+    tangent_x = 1.0
+    tangent_y = 0.0
+    tangent_z = 0.0
+    if tangent_vector is not None:
+        tangent_x = float(tangent_vector[0])
+        tangent_y = float(tangent_vector[1])
+        tangent_z = float(tangent_vector[2])
+
+    if flip_texcoord_v:
+        tangent_x = -tangent_x
+        tangent_y = -tangent_y
+        tangent_z = -tangent_z
+
+    encoded_tangent = _encode_tangent_to_efmi_scalar(
+        (tangent_x, tangent_y, tangent_z),
+        (normal_x, normal_y, normal_z),
+    )
+    packed_z = int(max(-511, min(511, round(encoded_tangent * 511.0)))) & 0x3FF
+
+    tangent_sign = float(bitangent_sign)
+    if flip_bitangent_sign:
+        tangent_sign *= -1.0
+
     packed_flag = 1 << 30
-    return packed_x | (packed_y << 10) | (packed_z << 20) | packed_flag
+    sign_flag = (1 << 31) if tangent_sign >= 0.0 else 0
+    return packed_x | (packed_y << 10) | (packed_z << 20) | packed_flag | sign_flag
 
 
 def _pack_half2_uint(value_a: float, value_b: float) -> int:
@@ -363,9 +456,15 @@ def _capture_unique_vertex_targets(evaluated_mesh, representative_loop_indices):
         loop = evaluated_mesh.loops[loop_index]
         vertex = evaluated_mesh.vertices[loop.vertex_index]
         unique_positions.append((float(vertex.co.x), float(vertex.co.y), float(vertex.co.z)))
-        unique_normals.append(encode_normal_to_efmi_packed_uint(loop.normal))
         tangent = loop.tangent if has_tangent_data else (0.0, 0.0, 0.0)
         bitangent_sign = float(loop.bitangent_sign) if has_tangent_data else 1.0
+        unique_normals.append(
+            encode_normal_to_efmi_packed_uint(
+                loop.normal,
+                tangent,
+                bitangent_sign,
+            )
+        )
         unique_tangents.append(
             (
                 float(tangent[0]),
@@ -498,7 +597,11 @@ def _read_base_position_rows(buffer_path: str, stride: int):
             base_rows.append(
                 {
                     "position": (float(position_x), float(position_y), float(position_z)),
-                    "packed_normal": encode_normal_to_efmi_packed_uint(base_normal),
+                    "packed_normal": encode_normal_to_efmi_packed_uint(
+                        base_normal,
+                        (float(tangent_x), float(tangent_y), float(tangent_z)),
+                        float(tangent_w),
+                    ),
                     "normal": base_normal,
                     "tangent": (
                         float(tangent_x),
@@ -826,7 +929,7 @@ def export_morph_mesh_for_proxy_armature(
                 "base_position_layout": "EFMI_PNTA40" if int(resolved_base_stride) >= 40 else "EFMI_PACKED16",
                 "include_normals": bool(include_normals),
                 "include_tangents": bool(resolved_include_tangents),
-                "normal_encoding_mode": "efmi_vb0_oct_r32_uint" if include_normals else "none",
+                "normal_encoding_mode": "efmi_vb0_tbn_r10g10b10a2_uint" if include_normals else "none",
                 "influence_row_stride": int(influence_row_stride),
                 "sample_semantics": "shared_tick_to_sample_window",
                 "vertex_order_requirement": "match_theherta_unique_vertex_order",

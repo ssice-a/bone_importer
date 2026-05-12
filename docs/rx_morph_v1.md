@@ -95,7 +95,9 @@ Current flag plan:
 
 Current encoding plan:
 
-- `normal_mode = 1`: EFMI `vb0` normal uses octahedral-encoded `R32_UINT`
+- `normal_mode = 1`: EFMI `vb0` normal uses packed `R32_UINT` TBN data
+  with octahedral XY normal encoding, tangent payload in bits `20..29`,
+  the packed flag in bit `30`, and the bitangent-sign flag in bit `31`
 - `v1` can additionally carry `key=1` tangent targets for explicit `P12+N12+TA16`-style Position layouts
 - tangent targets are only emitted when normal targets are also enabled
 
@@ -145,7 +147,8 @@ The working plan is:
 - read base normal from the exported base Position buffer
 - export one `key=1` normal target per active shape-key influence
 - mix normals in morph CS using the interpolated shape-key weights
-- normalize the final normal and encode it back into EFMI packed-normal form
+- normalize the final normal and encode it back into EFMI packed-normal form,
+  including the tangent/sign payload expected by packed-normal layouts
 
 This is a high-quality runtime approximation that keeps the format compact while staying much closer to Blender than a pure position-only path.
 

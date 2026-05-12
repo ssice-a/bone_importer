@@ -208,7 +208,7 @@ def register_addon_properties():
     bpy.types.Scene.bi_morph_include_normals = bpy.props.BoolProperty(
         name="Morph Normals",
         default=True,
-        description="Export per-channel key=1 target normals and re-encode EFMI vb0 packed normals at runtime.",
+        description="Export per-channel key=1 target normals and re-encode EFMI vb0 packed TBN normals at runtime, including the tangent/sign payload used by packed-normal layouts.",
     )
     bpy.types.Scene.bi_morph_include_tangents = bpy.props.BoolProperty(
         name="Morph Tangents",
