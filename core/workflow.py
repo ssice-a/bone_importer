@@ -10,7 +10,10 @@ from ..constants import DEFAULT_PART_ROW_COUNT
 from .animation_export import (
     build_tqs_frame_buffer,
     finalize_animation_export_job,
+    normalize_clip_name,
     prepare_animation_export_job,
+    write_clip_sidecar_files,
+    write_shared_timeline_sidecar_files,
     write_tqs_animation_frame,
 )
 from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
@@ -32,6 +35,7 @@ from .export import (
     clear_previous_palette_cache,
 )
 from .importer import apply_palette_segment_to_proxy_armature, resolve_palette_segment_window
+from .ini_export import write_generated_runtime_ini
 from .io import (
     build_metadata_path_from_binary_path,
     load_palette_file,
@@ -42,6 +46,7 @@ from .layout import calculate_slot_capacity_for_part_size
 from .models import (
     BatchAnimationExportResult,
     BatchBindRefreshResult,
+    BatchMorphExportResult,
     BatchPaletteExportResult,
     BatchPaletteImportResult,
     BatchProxyRigGenerationResult,
@@ -49,6 +54,11 @@ from .models import (
     PaletteImportResult,
     ProxyBindCaptureResult,
     ProxyRigGenerationResult,
+)
+from .morph_export import (
+    MORPH_CHANNEL_MODE_ANIMATED,
+    export_morph_mesh_for_proxy_armature,
+    write_morph_manifest,
 )
 from .proxy import (
     build_proxy_bone_definitions,
@@ -297,10 +307,15 @@ def export_animation_for_proxy_armatures(
     context,
     proxy_armatures,
     output_directory,
+    clip_name,
+    clip_id,
     frame_start,
     frame_end,
     frame_step,
     fps,
+    presents_per_step=1,
+    default_loop_start=-1,
+    default_loop_end=-1,
     write_metadata=True,
 ):
     """Export one scene-evaluated TQS animation set per proxy armature."""
@@ -308,12 +323,14 @@ def export_animation_for_proxy_armatures(
     if not normalized_armatures:
         raise ValueError("No proxy armatures to export")
 
+    normalized_clip_name = normalize_clip_name(clip_name)
     selection_state = capture_selection_state(context)
     exported_armatures = 0
     total_frames = 0
     total_exported_bones = 0
     failed_armatures = []
     exported_files = []
+    completed_results = []
     export_jobs = []
     scene = context.scene
     original_frame = scene.frame_current if scene is not None else 0
@@ -327,6 +344,14 @@ def export_animation_for_proxy_armatures(
     progress_step = 0
     progress_stride = 1
     sampled_frames = 0
+    clip_manifest_path = ""
+    timeline_static_path = ""
+    master_playback_path = ""
+    morph_manifest_path = ""
+    generated_ini_path = ""
+    exported_morph_meshes = 0
+    total_morph_channels = 0
+    morph_results = []
     total_start_time = perf_counter()
     window_manager = context.window_manager if context is not None else None
 
@@ -338,10 +363,15 @@ def export_animation_for_proxy_armatures(
                     prepare_animation_export_job(
                         proxy_armature=proxy_armature,
                         output_directory=output_directory,
+                        clip_name=normalized_clip_name,
+                        clip_id=clip_id,
                         frame_start=frame_start,
                         frame_end=frame_end,
                         frame_step=frame_step,
                         fps=fps,
+                        presents_per_step=presents_per_step,
+                        default_loop_start=default_loop_start,
+                        default_loop_end=default_loop_end,
                         write_metadata=write_metadata,
                     )
                 )
@@ -390,7 +420,7 @@ def export_animation_for_proxy_armatures(
                             for cleanup_path in (
                                 export_job["tqs_path"],
                                 export_job["bind_path"],
-                                export_job["meta_path"],
+                                export_job["static_clip_path"],
                                 export_job["debug_metadata_path"],
                             ):
                                 if cleanup_path and os.path.exists(cleanup_path):
@@ -413,7 +443,7 @@ def export_animation_for_proxy_armatures(
                 for cleanup_path in (
                     export_job["tqs_path"],
                     export_job["bind_path"],
-                    export_job["meta_path"],
+                    export_job["static_clip_path"],
                     export_job["debug_metadata_path"],
                 ):
                     if cleanup_path and os.path.exists(cleanup_path):
@@ -425,9 +455,54 @@ def export_animation_for_proxy_armatures(
             exported_armatures += 1
             total_frames += result.frame_count
             total_exported_bones += result.bone_count
-            exported_files += [result.tqs_path, result.bind_path, result.meta_path]
+            completed_results.append(result)
+            exported_files += [result.tqs_path, result.bind_path, result.static_clip_path]
             if result.debug_metadata_path:
                 exported_files.append(result.debug_metadata_path)
+
+        try:
+            (
+                clip_manifest_path,
+                timeline_static_path,
+                master_playback_path,
+                timeline_static_metadata_path,
+                master_playback_metadata_path,
+            ) = write_clip_sidecar_files(
+                output_directory=output_directory,
+                clip_name=normalized_clip_name,
+                clip_id=clip_id,
+                export_results=completed_results,
+                write_metadata=write_metadata,
+            )
+        except Exception as exc:
+            failed_armatures.append(f"{normalized_clip_name} manifest: {exc}")
+            clip_manifest_path = ""
+            timeline_static_path = ""
+            master_playback_path = ""
+        else:
+            for shared_path in (
+                clip_manifest_path,
+                timeline_static_path,
+                master_playback_path,
+                timeline_static_metadata_path,
+                master_playback_metadata_path,
+            ):
+                if shared_path:
+                    exported_files.append(shared_path)
+
+        try:
+            generated_ini_path = write_generated_runtime_ini(
+                output_directory=output_directory,
+                clip_name=normalized_clip_name,
+                export_results=tuple(completed_results),
+                morph_results=tuple(morph_results),
+            )
+        except Exception as exc:
+            failed_armatures.append(f"{normalized_clip_name} generated ini: {exc}")
+            generated_ini_path = ""
+        else:
+            if generated_ini_path:
+                exported_files.append(generated_ini_path)
     finally:
         if scene is not None:
             scene.frame_set(original_frame)
@@ -450,6 +525,8 @@ def export_animation_for_proxy_armatures(
 
     return BatchAnimationExportResult(
         output_directory=bpy.path.abspath(output_directory or "//"),
+        clip_name=normalized_clip_name,
+        clip_id=int(clip_id),
         selected_armatures=len(normalized_armatures),
         exported_armatures=exported_armatures,
         total_frames=total_frames,
@@ -462,27 +539,241 @@ def export_animation_for_proxy_armatures(
         other_seconds=other_seconds,
         failed_armatures=tuple(failed_armatures),
         exported_files=tuple(exported_files),
+        clip_manifest_path=clip_manifest_path,
+        timeline_static_path=timeline_static_path,
+        master_playback_path=master_playback_path,
+        exported_morph_meshes=exported_morph_meshes,
+        total_morph_channels=total_morph_channels,
+        morph_manifest_path=morph_manifest_path,
+        generated_ini_path=generated_ini_path,
+    )
+
+
+def export_morph_for_proxy_armatures(
+    context,
+    proxy_armatures,
+    output_directory,
+    clip_name,
+    clip_id,
+    frame_start,
+    frame_end,
+    frame_step,
+    fps,
+    presents_per_step=1,
+    default_loop_start=-1,
+    default_loop_end=-1,
+    write_metadata=True,
+):
+    """Export only RX morph buffers while still seeding the shared timeline sidecars."""
+    normalized_armatures = tuple(proxy_armatures)
+    if not normalized_armatures:
+        raise ValueError("No proxy armatures to export")
+
+    normalized_clip_name = normalize_clip_name(clip_name)
+    selection_state = capture_selection_state(context)
+    failed_armatures = []
+    exported_files = []
+    exported_morph_meshes = 0
+    total_morph_channels = 0
+    morph_manifest_path = ""
+    generated_ini_path = ""
+    timeline_static_path = ""
+    master_playback_path = ""
+    sampled_frames = 0
+    morph_results = []
+    total_start_time = perf_counter()
+    scene = context.scene if context is not None else None
+    original_frame = scene.frame_current if scene is not None else 0
+
+    try:
+        if scene is not None:
+            exported_frames = tuple(range(int(frame_start), int(frame_end) + 1, max(int(frame_step), 1)))
+            sampled_frames = len(exported_frames)
+            morph_channel_mode = getattr(scene, "bi_morph_channel_mode", MORPH_CHANNEL_MODE_ANIMATED)
+            morph_include_normals = bool(getattr(scene, "bi_morph_include_normals", True))
+            morph_include_tangents = bool(getattr(scene, "bi_morph_include_tangents", False))
+
+            try:
+                (
+                    timeline_static_path,
+                    master_playback_path,
+                    timeline_static_metadata_path,
+                    master_playback_metadata_path,
+                ) = write_shared_timeline_sidecar_files(
+                    output_directory=output_directory,
+                    clip_name=normalized_clip_name,
+                    clip_id=clip_id,
+                    frame_start=frame_start,
+                    frame_end=frame_end,
+                    frame_step=frame_step,
+                    fps=fps,
+                    presents_per_step=presents_per_step,
+                    default_loop_start=default_loop_start,
+                    default_loop_end=default_loop_end,
+                    write_metadata=write_metadata,
+                )
+            except Exception as exc:
+                failed_armatures.append(f"{normalized_clip_name} shared timeline: {exc}")
+            else:
+                for shared_path in (
+                    timeline_static_path,
+                    master_playback_path,
+                    timeline_static_metadata_path,
+                    master_playback_metadata_path,
+                ):
+                    if shared_path:
+                        exported_files.append(shared_path)
+
+            for proxy_armature in normalized_armatures:
+                try:
+                    prepare_proxy_armature(proxy_armature, require_part_id=True)
+                    source_mesh = find_source_mesh_for_object(proxy_armature)
+                    morph_result = export_morph_mesh_for_proxy_armature(
+                        context=context,
+                        proxy_armature=proxy_armature,
+                        source_mesh=source_mesh,
+                        output_directory=output_directory,
+                        clip_name=normalized_clip_name,
+                        clip_id=clip_id,
+                        frame_start=frame_start,
+                        frame_end=frame_end,
+                        frame_step=frame_step,
+                        include_normals=morph_include_normals,
+                        include_tangents=morph_include_tangents,
+                        channel_mode=morph_channel_mode,
+                        write_metadata=write_metadata,
+                    )
+                except Exception as exc:
+                    failed_armatures.append(f"{proxy_armature.name} morph: {exc}")
+                    continue
+
+                if morph_result is None:
+                    continue
+
+                morph_results.append(morph_result)
+                exported_morph_meshes += 1
+                total_morph_channels += len(morph_result.channel_names)
+                exported_files.extend(
+                    path
+                    for path in (
+                        morph_result.morph_static_path,
+                        morph_result.morph_anim_path,
+                        morph_result.metadata_path,
+                    )
+                    if path
+                )
+
+            try:
+                morph_manifest_path = write_morph_manifest(
+                    output_directory=output_directory,
+                    clip_name=normalized_clip_name,
+                    clip_id=clip_id,
+                    mesh_results=tuple(morph_results),
+                )
+            except Exception as exc:
+                failed_armatures.append(f"{normalized_clip_name} morph manifest: {exc}")
+                morph_manifest_path = ""
+            else:
+                if morph_manifest_path:
+                    exported_files.append(morph_manifest_path)
+
+            try:
+                generated_ini_path = write_generated_runtime_ini(
+                    output_directory=output_directory,
+                    clip_name=normalized_clip_name,
+                    export_results=(),
+                    morph_results=tuple(morph_results),
+                )
+            except Exception as exc:
+                failed_armatures.append(f"{normalized_clip_name} generated ini: {exc}")
+                generated_ini_path = ""
+            else:
+                if generated_ini_path:
+                    exported_files.append(generated_ini_path)
+    finally:
+        if scene is not None:
+            scene.frame_set(original_frame)
+        restore_selection_state(context, selection_state)
+
+    elapsed_seconds = perf_counter() - total_start_time
+    return BatchMorphExportResult(
+        output_directory=bpy.path.abspath(output_directory or "//"),
+        clip_name=normalized_clip_name,
+        clip_id=int(clip_id),
+        selected_armatures=len(normalized_armatures),
+        exported_morph_meshes=exported_morph_meshes,
+        total_morph_channels=total_morph_channels,
+        sampled_frames=sampled_frames,
+        elapsed_seconds=elapsed_seconds,
+        failed_armatures=tuple(failed_armatures),
+        exported_files=tuple(exported_files),
+        timeline_static_path=timeline_static_path,
+        master_playback_path=master_playback_path,
+        morph_manifest_path=morph_manifest_path,
+        generated_ini_path=generated_ini_path,
     )
 
 
 def export_animation_for_selected_proxy_armatures(
     context,
     output_directory,
+    clip_name,
+    clip_id,
     frame_start,
     frame_end,
     frame_step,
     fps,
+    presents_per_step=1,
+    default_loop_start=-1,
+    default_loop_end=-1,
     write_metadata=True,
 ):
-    """Export dense animation buffers for the current target proxy armature set."""
+    """Export standalone RX clip buffers for the current target proxy armature set."""
     return export_animation_for_proxy_armatures(
         context,
         build_target_proxy_armatures(context),
         output_directory,
+        clip_name,
+        clip_id,
         frame_start,
         frame_end,
         frame_step,
         fps,
+        presents_per_step,
+        default_loop_start,
+        default_loop_end,
+        write_metadata,
+    )
+
+
+def export_morph_for_selected_proxy_armatures(
+    context,
+    output_directory,
+    clip_name,
+    clip_id,
+    frame_start,
+    frame_end,
+    frame_step,
+    fps,
+    presents_per_step=1,
+    default_loop_start=-1,
+    default_loop_end=-1,
+    write_metadata=True,
+):
+    """Export standalone RX morph buffers for the current target proxy armature set."""
+    return export_morph_for_proxy_armatures(
+        context,
+        build_target_proxy_armatures(context),
+        output_directory,
+        clip_name,
+        clip_id,
+        frame_start,
+        frame_end,
+        frame_step,
+        fps,
+        presents_per_step,
+        default_loop_start,
+        default_loop_end,
         write_metadata,
     )
 

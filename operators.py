@@ -7,6 +7,7 @@ from .core.workflow import (
     clear_previous_palette_for_active_proxy,
     dump_debug_for_active_proxy,
     export_animation_for_selected_proxy_armatures,
+    export_morph_for_selected_proxy_armatures,
     export_palette_for_selected_proxy_armatures,
     generate_proxy_rig_from_active_mesh,
     generate_proxy_rigs_from_selected_meshes,
@@ -163,9 +164,9 @@ class BI_OT_export_animation(bpy.types.Operator):
     """导出稀疏多帧动画 clip。"""
 
     bl_idname = "object.bi_export_animation"
-    bl_label = "Export Runtime TQ"
+    bl_label = "Export Bone Clip"
     bl_description = (
-        "Export scene-evaluated TQ, bind, and meta buffers for the selected frame range"
+        "Export scene-evaluated TQ, bind, static clip, shared timeline defaults, and master playback data for the selected frame range"
     )
     bl_options = {"REGISTER"}
 
@@ -183,10 +184,15 @@ class BI_OT_export_animation(bpy.types.Operator):
             result = export_animation_for_selected_proxy_armatures(
                 context,
                 output_directory=scene.bi_animation_output_dir,
+                clip_name=scene.bi_animation_clip_name,
+                clip_id=scene.bi_animation_clip_id,
                 frame_start=scene.bi_animation_frame_start,
                 frame_end=scene.bi_animation_frame_end,
                 frame_step=scene.bi_animation_frame_step,
                 fps=scene.bi_animation_fps,
+                presents_per_step=1,
+                default_loop_start=-1,
+                default_loop_end=-1,
                 write_metadata=bool(scene.bi_write_metadata),
             )
         except ValueError as exc:
@@ -208,6 +214,12 @@ class BI_OT_export_animation(bpy.types.Operator):
                 f"; total bones {result.total_exported_bones}"
                 f"; time {result.elapsed_seconds:.2f}s"
             )
+        if result.exported_morph_meshes:
+            message += (
+                f"; morph meshes {result.exported_morph_meshes}"
+                f"; morph channels {result.total_morph_channels}"
+            )
+        message += f"; clip {result.clip_name}#{result.clip_id}"
         self.report({"INFO"}, message)
         self.report(
             {"INFO"},
@@ -215,6 +227,63 @@ class BI_OT_export_animation(bpy.types.Operator):
             f"{result.frame_set_seconds:.2f}s | frame_write {result.frame_write_seconds:.2f}s"
             f" | finalize {result.finalize_seconds:.2f}s | other {result.other_seconds:.2f}s",
         )
+        if result.generated_ini_path:
+            self.report({"INFO"}, f"Generated ini snippet: {result.generated_ini_path}")
+        if result.failed_armatures:
+            self.report({"WARNING"}, "; ".join(result.failed_armatures))
+        return {"FINISHED"}
+
+
+class BI_OT_export_morph(bpy.types.Operator):
+    """导出稀疏 shape key runtime clip。"""
+
+    bl_idname = "object.bi_export_morph"
+    bl_label = "Export Morph Clip"
+    bl_description = "Export scene-evaluated morph_static, morph_anim, and shared timeline/master playback sidecars for the selected frame range"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        if not context.scene:
+            return False
+        if find_proxy_armature_for_object(context.active_object) is not None:
+            return True
+        return bool(list_selected_proxy_armatures(context))
+
+    def execute(self, context):
+        scene = context.scene
+        try:
+            result = export_morph_for_selected_proxy_armatures(
+                context,
+                output_directory=scene.bi_animation_output_dir,
+                clip_name=scene.bi_animation_clip_name,
+                clip_id=scene.bi_animation_clip_id,
+                frame_start=scene.bi_animation_frame_start,
+                frame_end=scene.bi_animation_frame_end,
+                frame_step=scene.bi_animation_frame_step,
+                fps=scene.bi_animation_fps,
+                presents_per_step=1,
+                default_loop_start=-1,
+                default_loop_end=-1,
+                write_metadata=bool(scene.bi_write_metadata),
+            )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, f"Morph export failed: {exc}")
+            return {"CANCELLED"}
+
+        message = (
+            f"Exported {result.exported_morph_meshes} morph mesh(es)"
+            f"; morph channels {result.total_morph_channels}"
+            f"; sampled frames {result.sampled_frames}"
+            f"; clip {result.clip_name}#{result.clip_id}"
+            f"; time {result.elapsed_seconds:.2f}s"
+        )
+        self.report({"INFO"}, message)
+        if result.generated_ini_path:
+            self.report({"INFO"}, f"Generated ini snippet: {result.generated_ini_path}")
         if result.failed_armatures:
             self.report({"WARNING"}, "; ".join(result.failed_armatures))
         return {"FINISHED"}

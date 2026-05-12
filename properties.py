@@ -28,10 +28,18 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_buffer_correction_mode"),
     (bpy.types.Scene, "bi_output_path"),
     (bpy.types.Scene, "bi_animation_output_dir"),
+    (bpy.types.Scene, "bi_animation_clip_name"),
+    (bpy.types.Scene, "bi_animation_clip_id"),
     (bpy.types.Scene, "bi_animation_frame_start"),
     (bpy.types.Scene, "bi_animation_frame_end"),
     (bpy.types.Scene, "bi_animation_frame_step"),
     (bpy.types.Scene, "bi_animation_fps"),
+    (bpy.types.Scene, "bi_animation_presents_per_step"),
+    (bpy.types.Scene, "bi_animation_loop_start"),
+    (bpy.types.Scene, "bi_animation_loop_end"),
+    (bpy.types.Scene, "bi_morph_include_normals"),
+    (bpy.types.Scene, "bi_morph_include_tangents"),
+    (bpy.types.Scene, "bi_morph_channel_mode"),
     (bpy.types.Scene, "bi_import_path"),
     (bpy.types.Scene, "bi_import_segment"),
     (bpy.types.Scene, "bi_write_metadata"),
@@ -142,9 +150,20 @@ def register_addon_properties():
     )
     bpy.types.Scene.bi_animation_output_dir = bpy.props.StringProperty(
         name="Animation Dir",
-        default="//animation_clips",
+        default="E:\\XXMI\\EFMI\\Mods\\RXanimin",
         subtype="DIR_PATH",
-        description="Directory used to export scene-evaluated TQ, bind, and meta buffers for the selected frame range.",
+        description="Directory used to export standalone RX runtime clip files, manifests, shared timeline defaults, and the master playback buffer.",
+    )
+    bpy.types.Scene.bi_animation_clip_name = bpy.props.StringProperty(
+        name="Clip Name",
+        default="rxanimin",
+        description="Logical clip name written into the exported clip manifest, shared timeline defaults, and master playback sidecars. Keep rxanimin if you want the bundled RXanimin.ini to pick it up directly.",
+    )
+    bpy.types.Scene.bi_animation_clip_id = bpy.props.IntProperty(
+        name="Clip Id",
+        default=0,
+        min=0,
+        description="Stable numeric clip id written into per-part static clip data and shared sidecar metadata. The shared timeline buffer itself does not carry clip identity.",
     )
     bpy.types.Scene.bi_animation_frame_start = bpy.props.IntProperty(
         name="Frame Start",
@@ -166,7 +185,44 @@ def register_addon_properties():
         name="FPS",
         default=60.0,
         min=1.0,
-        description="Playback FPS written into the optional debug metadata JSON for the exported TQ clip.",
+        description="Clip sample rate stored inside the exported static clip metadata.",
+    )
+    bpy.types.Scene.bi_animation_presents_per_step = bpy.props.IntProperty(
+        name="Ticks / Sample",
+        default=1,
+        min=1,
+        description="Default runtime tick count spent inside one exported sample. This value seeds the shared timeline defaults buffer and the initial master playback buffer. Smaller values play faster.",
+    )
+    bpy.types.Scene.bi_animation_loop_start = bpy.props.IntProperty(
+        name="Loop Start",
+        default=-1,
+        min=-1,
+        description="Preferred loop start source frame. Use -1 to default to the first exported frame.",
+    )
+    bpy.types.Scene.bi_animation_loop_end = bpy.props.IntProperty(
+        name="Loop End",
+        default=-1,
+        min=-1,
+        description="Preferred loop end source frame. Use -1 to default to the last exported frame.",
+    )
+    bpy.types.Scene.bi_morph_include_normals = bpy.props.BoolProperty(
+        name="Morph Normals",
+        default=True,
+        description="Export per-channel key=1 target normals and re-encode EFMI vb0 packed normals at runtime.",
+    )
+    bpy.types.Scene.bi_morph_include_tangents = bpy.props.BoolProperty(
+        name="Morph Tangents",
+        default=False,
+        description="Export per-channel key=1 target tangents when the resolved base Position buffer stores explicit tangent data such as EFMI P12+N12+TA16 layouts. Disabled by default because most meshes use packed-normal Position buffers that do not need tangent targets.",
+    )
+    bpy.types.Scene.bi_morph_channel_mode = bpy.props.EnumProperty(
+        name="Morph Channels",
+        items=[
+            ("ANIMATED", "Animated Channels", "Export only shape keys whose evaluated weights actually change across the sampled clip"),
+            ("ALL", "All Channels", "Export every non-basis shape key channel, even if it stays static over the sampled clip"),
+        ],
+        default="ANIMATED",
+        description="Choose whether morph export only writes animated channels or all available shape-key channels.",
     )
     bpy.types.Scene.bi_import_path = bpy.props.StringProperty(
         name="Import Path",

@@ -82,7 +82,7 @@ class AnimationExportResult:
     armature_name: str
     tqs_path: str
     bind_path: str
-    meta_path: str
+    static_clip_path: str
     frame_count: int
     bone_count: int
     metadata: dict
@@ -90,10 +90,26 @@ class AnimationExportResult:
 
 
 @dataclass(frozen=True)
+class MorphExportResult:
+    """Summary of exporting one mesh-local morph buffer pair."""
+
+    mesh_key: str
+    morph_static_path: str
+    morph_anim_path: str
+    metadata_path: str
+    channel_count: int
+    sample_count: int
+    vertex_count: int
+    influence_count: int
+
+
+@dataclass(frozen=True)
 class BatchAnimationExportResult:
     """Summary of exporting TQS animation buffers for multiple proxy rigs."""
 
     output_directory: str
+    clip_name: str
+    clip_id: int
     selected_armatures: int
     exported_armatures: int
     total_frames: int
@@ -106,6 +122,33 @@ class BatchAnimationExportResult:
     other_seconds: float = 0.0
     failed_armatures: tuple[str, ...] = field(default_factory=tuple)
     exported_files: tuple[str, ...] = field(default_factory=tuple)
+    clip_manifest_path: str = ""
+    timeline_static_path: str = ""
+    master_playback_path: str = ""
+    exported_morph_meshes: int = 0
+    total_morph_channels: int = 0
+    morph_manifest_path: str = ""
+    generated_ini_path: str = ""
+
+
+@dataclass(frozen=True)
+class BatchMorphExportResult:
+    """Summary of exporting morph buffers for multiple proxy rigs."""
+
+    output_directory: str
+    clip_name: str
+    clip_id: int
+    selected_armatures: int
+    exported_morph_meshes: int
+    total_morph_channels: int
+    sampled_frames: int = 0
+    elapsed_seconds: float = 0.0
+    failed_armatures: tuple[str, ...] = field(default_factory=tuple)
+    exported_files: tuple[str, ...] = field(default_factory=tuple)
+    timeline_static_path: str = ""
+    master_playback_path: str = ""
+    morph_manifest_path: str = ""
+    generated_ini_path: str = ""
 
 
 @dataclass(frozen=True)

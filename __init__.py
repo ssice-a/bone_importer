@@ -3,10 +3,10 @@
 bl_info = {
     "name": "Bone Importer",
     "author": "OpenAI Codex",
-    "version": (0, 6, 0),
+    "version": (0, 11, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Bone Importer",
-    "description": "Generate VS-T0 proxy bones and import/export palette patches or frame-range runtime buffer pairs.",
+    "description": "Generate VS-T0 proxy bones and export standalone RX runtime bone+morph clips with shared timeline playback.",
     "category": "Animation",
 }
 
@@ -20,6 +20,7 @@ REGISTERED_CLASSES = (
     operators.BI_OT_refresh_bind,
     operators.BI_OT_export_palette,
     operators.BI_OT_export_animation,
+    operators.BI_OT_export_morph,
     operators.BI_OT_import_palette,
     operators.BI_OT_clear_previous_cache,
     operators.BI_OT_dump_debug,

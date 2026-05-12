@@ -44,7 +44,7 @@ def get_proxy_buffer_correction_mode(proxy_armature):
 
 
 def get_buffer_correction_code(correction_mode):
-    """Expose a compact integer code for HLSL meta buffers."""
+    """Expose a compact integer code for HLSL runtime buffers."""
     return int(BUFFER_CORRECTION_CODE_MAP[normalize_buffer_correction_mode(correction_mode)])
 
 

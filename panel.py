@@ -91,9 +91,15 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         static_box.prop(scene, "bi_import_segment")
 
         animation_box = workflow_box.box()
-        animation_box.label(text="Runtime TQ Export", icon="ACTION")
-        animation_box.label(text="Uses scene.frame_set() per frame and exports TQ + bind + meta.", icon="INFO")
+        animation_box.label(text="RX Clip Settings", icon="ACTION")
+        animation_box.label(
+            text="Shared clip range/output settings used by both bone and morph export.",
+            icon="INFO",
+        )
         animation_box.prop(scene, "bi_animation_output_dir")
+        clip_row = animation_box.row(align=True)
+        clip_row.prop(scene, "bi_animation_clip_name")
+        clip_row.prop(scene, "bi_animation_clip_id")
         frame_row = animation_box.row(align=True)
         frame_row.prop(scene, "bi_animation_frame_start")
         frame_row.prop(scene, "bi_animation_frame_end")
@@ -101,7 +107,29 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         animation_box.prop(scene, "bi_animation_fps")
         animation_button_row = animation_box.row(align=True)
         animation_button_row.operator("object.bi_export_animation", icon="EXPORT")
+        animation_box.label(
+            text="Ticks/Sample and Loop Start/End now use automatic defaults.",
+            icon="INFO",
+        )
         animation_box.enabled = (
+            (proxy_armature is not None and proxy_armature.bi_part_id >= 0)
+            or selected_proxy_armature_count > 0
+        )
+
+        morph_box = workflow_box.box()
+        morph_box.label(text="RX Morph Export", icon="SHAPEKEY_DATA")
+        morph_box.label(
+            text="Exports per-mesh morph_static + morph_anim sidecars that share the RX clip timeline/master playback buffers.",
+            icon="INFO",
+        )
+        morph_box.prop(scene, "bi_morph_include_normals")
+        tangent_row = morph_box.row()
+        tangent_row.enabled = bool(scene.bi_morph_include_normals)
+        tangent_row.prop(scene, "bi_morph_include_tangents")
+        morph_box.prop(scene, "bi_morph_channel_mode")
+        morph_button_row = morph_box.row(align=True)
+        morph_button_row.operator("object.bi_export_morph", icon="EXPORT")
+        morph_button_row.enabled = (
             (proxy_armature is not None and proxy_armature.bi_part_id >= 0)
             or selected_proxy_armature_count > 0
         )
