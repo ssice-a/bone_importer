@@ -8,9 +8,14 @@ adapter that builds the actual sample arrays.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
+
+
+TRUTHY_CACHE_VALUES = {"1", "true", "yes", "on"}
+FALSEY_CACHE_VALUES = {"0", "false", "no", "off"}
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,32 @@ def select_payload_samples(sample_cache, sample_indices: Iterable[int]):
 
     indices = tuple(int(index) for index in sample_indices)
     return np.asarray(sample_cache[:, indices, :], dtype="<f4")
+
+
+def resolve_sample_cache_directory(
+    output_directory: str,
+    explicit_cache_dir: str = "",
+    use_cache_flag: str = "",
+    path_resolver: Callable[[str], str] = os.path.abspath,
+) -> str:
+    """Resolve the opt-in NPY cache directory shared by every export entrypoint."""
+
+    raw_cache_dir = str(explicit_cache_dir or "").strip()
+    raw_cache_flag = str(use_cache_flag or "").strip().lower()
+    output_root = str(output_directory or ".")
+
+    if raw_cache_dir:
+        normalized_cache_dir = raw_cache_dir.lower()
+        if normalized_cache_dir in FALSEY_CACHE_VALUES:
+            return ""
+        if normalized_cache_dir in TRUTHY_CACHE_VALUES:
+            return path_resolver(os.path.join(output_root, ".rx_bone_sample_cache"))
+        return path_resolver(raw_cache_dir)
+
+    if raw_cache_flag in TRUTHY_CACHE_VALUES:
+        return path_resolver(os.path.join(output_root, ".rx_bone_sample_cache"))
+
+    return ""
 
 
 def _sample_entry_sort_key(entry: tuple[Any, Any, str]) -> tuple[str, str, str]:

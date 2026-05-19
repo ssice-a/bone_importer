@@ -375,11 +375,6 @@ def main():
     total_start = time.perf_counter()
     timings = {}
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    if str(os.environ.get("RX_EXPORT_USE_BONE_CACHE", "") or "").strip() in {"1", "true", "TRUE"}:
-        os.environ.setdefault(
-            "RX_BONE_SAMPLE_CACHE_DIR",
-            os.path.join(OUTPUT_DIR, ".rx_bone_sample_cache"),
-        )
     os.environ.setdefault("RX_BONE_SAMPLE_HIDE_MESHES", "1")
     stage_start = time.perf_counter()
     _reset_rx_manifest()

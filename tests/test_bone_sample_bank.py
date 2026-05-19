@@ -14,6 +14,7 @@ sys.modules[SPEC.name] = bone_sample_bank
 SPEC.loader.exec_module(bone_sample_bank)
 
 build_bone_sample_plan = bone_sample_bank.build_bone_sample_plan
+resolve_sample_cache_directory = bone_sample_bank.resolve_sample_cache_directory
 select_payload_samples = bone_sample_bank.select_payload_samples
 
 
@@ -84,6 +85,26 @@ class BoneSampleBankTests(unittest.TestCase):
         self.assertEqual(set(plan.groups), {"NONE", "MATRIX_RX_90_DEG"})
         self.assertEqual(plan.payloads["packed16"].group_key, "NONE")
         self.assertEqual(plan.payloads["pnta40"].group_key, "MATRIX_RX_90_DEG")
+
+    def test_resolves_opt_in_cache_directory_from_export_flag(self):
+        cache_dir = resolve_sample_cache_directory(
+            r"E:\Out",
+            explicit_cache_dir="",
+            use_cache_flag="1",
+            path_resolver=lambda value: value.replace("\\", "/"),
+        )
+
+        self.assertEqual(cache_dir, "E:/Out/.rx_bone_sample_cache")
+
+    def test_explicit_cache_directory_overrides_export_flag(self):
+        cache_dir = resolve_sample_cache_directory(
+            r"E:\Out",
+            explicit_cache_dir=r"D:\Cache",
+            use_cache_flag="1",
+            path_resolver=lambda value: value.replace("\\", "/"),
+        )
+
+        self.assertEqual(cache_dir, "D:/Cache")
 
 
 if __name__ == "__main__":

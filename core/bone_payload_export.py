@@ -12,7 +12,7 @@ from time import perf_counter
 import bpy
 import numpy as np
 
-from .bone_sample_bank import build_bone_sample_plan, select_payload_samples
+from .bone_sample_bank import build_bone_sample_plan, resolve_sample_cache_directory, select_payload_samples
 from .animation_export import (
     build_master_playback_uint4_rows,
     build_timeline_static_uint4_rows,
@@ -547,12 +547,12 @@ def _build_sample_cache_key(context, exported_frames, sample_entries, correction
 
 
 def _resolve_sample_cache_dir(output_directory: str) -> str:
-    cache_dir = str(os.environ.get("RX_BONE_SAMPLE_CACHE_DIR", "") or "").strip()
-    if not cache_dir:
-        return ""
-    if cache_dir in {"1", "true", "TRUE"}:
-        cache_dir = os.path.join(bpy.path.abspath(output_directory or "//"), ".rx_bone_sample_cache")
-    return bpy.path.abspath(cache_dir)
+    return resolve_sample_cache_directory(
+        output_directory=bpy.path.abspath(output_directory or "//"),
+        explicit_cache_dir=os.environ.get("RX_BONE_SAMPLE_CACHE_DIR", ""),
+        use_cache_flag=os.environ.get("RX_EXPORT_USE_BONE_CACHE", ""),
+        path_resolver=bpy.path.abspath,
+    )
 
 
 def _load_sample_cache(cache_dir: str, cache_hash: str, expected_shape: tuple[int, int, int]):
