@@ -65,6 +65,12 @@ def _append_global_resources(lines: list[str], manifest: dict, clip_name: str, o
     _line(lines, "stride = 16")
     _line(lines, f"filename = {_ini_filename(master_path, output_directory)}")
     _line(lines)
+    _line(lines, "[ResourceCB1Flag_Eyelash]")
+    _line(lines, "type = Buffer")
+    _line(lines, "format = R32_FLOAT")
+    _line(lines, "; cb1[4].w bitfield value used by eyelash/eye VS branches")
+    _line(lines, "data = 33.0")
+    _line(lines)
     _line(lines, "[CustomShader_UpdateBonePaletteTQ]")
     _line(lines, "cs = hlsl\\update_bone_palette_tq_cs.hlsl")
     _line(lines, "cs-t3 = ResourceMasterPlayback_SRV")
@@ -246,7 +252,14 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, "    run = CustomShader_UpdateBonePaletteTQ")
         _line(lines, f"    ResourceBonePalette_{key} = copy ResourceBonePalette_{key}_UAV")
         _line(lines, f"    cs-u0 = ResourceFakeCB1_{key}_UAV")
+        _line(lines, f"    cs-t2 = ResourceBoneStatic_{key}")
+        if str(draw_part.get("cb1_profile", "") or "").upper() == "EYELASH":
+            _line(lines, "    cs-t3 = ResourceCB1Flag_Eyelash")
+        else:
+            _line(lines, "    cs-t3 = null")
+        _line(lines, "    dispatch = 32, 1, 1")
         _line(lines, "    run = CustomShader_RedirectCB1LocalPalette")
+        _line(lines, "    cs-t3 = null")
         _line(lines, f"    ResourceFakeCB1_{key} = copy ResourceFakeCB1_{key}_UAV")
         _line(lines, f"    vs-t0 = ResourceBonePalette_{key}")
         _line(lines, f"    vs-cb1 = ResourceFakeCB1_{key}")
@@ -619,15 +632,37 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     BonePalette[previous_base + row_base + 2] = out2;
 }
 """,
-    "redirect_cb1_local_palette_cs.hlsl": r"""RWStructuredBuffer<float4> FakeCB1 : register(u0);
+    "redirect_cb1_local_palette_cs.hlsl": r"""StructuredBuffer<uint4> BoneStatic : register(t2);
+Buffer<float> CB1FlagValue : register(t3);
+RWStructuredBuffer<uint4> FakeCB1 : register(u0);
 
 [numthreads(1, 1, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x != 0) return;
-    // The final project-specific CB1 extraction shader can fill the rest.
-    // Local palette route keeps offsets at zero because each DrawPart owns its palette.
-    FakeCB1[0] = float4(0, 0, 0, 0);
+    uint row_id = id.x;
+    if (row_id >= 32u) return;
+
+    uint4 cb_data = uint4(0u, 0u, 0u, 0u);
+    uint block_row = row_id & 15u;
+
+    if (block_row == 4u)
+    {
+        uint flag_count = 0u;
+        CB1FlagValue.GetDimensions(flag_count);
+        if (flag_count > 0u)
+        {
+            cb_data.w = (uint)CB1FlagValue[0];
+        }
+    }
+
+    if (block_row == 5u)
+    {
+        uint4 static_header1 = BoneStatic[1];
+        cb_data.x = 0u;
+        cb_data.y = static_header1.y;
+    }
+
+    FakeCB1[row_id] = cb_data;
 }
 """,
     "apply_morph_to_vb_cs.hlsl": r"""#include "rx_anim_sampling.hlsli"
