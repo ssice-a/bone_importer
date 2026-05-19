@@ -1073,7 +1073,7 @@ def export_morph_mesh_for_proxy_armature(
                 "clip_name": normalize_clip_name(clip_name),
                 "clip_id": int(clip_id),
                 "mesh_key": mesh_key,
-                "armature_name": proxy_armature.name,
+                "armature_name": proxy_armature.name if proxy_armature is not None else "",
                 "draw_key": str(getattr(draw_part, "draw_key", mesh_key)),
                 "draw_object_name": str(getattr(getattr(draw_part, "source_object", None), "name", "")),
                 "hash": str(getattr(draw_part, "hash", "")),

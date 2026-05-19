@@ -10,7 +10,7 @@ from .collection_plan import (
     CB1_OVERRIDE_NONE,
     normalize_cb1_override,
 )
-from .context import build_part_layout_from_id, find_proxy_armature_for_object
+from .context import find_proxy_armature_for_object
 
 
 DRAW_PART_NAME_RE = re.compile(
@@ -24,18 +24,21 @@ class RuntimeDrawPart:
 
     draw_key: str
     source_object: bpy.types.Object
-    proxy_armature: bpy.types.Object
+    proxy_armature: bpy.types.Object | None
     hash: str
     match_index_count: int
     first_index: int
-    part_id: int
-    part_base: int
-    part_size: int
-    previous_offset: int
-    previous_base: int
-    buffer_size: int
     bone_namespace: str
+    match_priority: int = 50
+    bone_enabled: bool = True
+    bone_source_armature: bpy.types.Object | None = None
+    bone_slot_map_json: str = ""
+    skin_contract: str = "TARGET_NUMERIC_GROUPS"
+    morph_enabled: bool = False
+    morph_source_object: bpy.types.Object | None = None
     cb1_override: str = CB1_OVERRIDE_NONE
+    cb1_profile: str = "NONE"
+    vb_layout_profile: str = "AUTO"
     buffer_correction_mode: str = ""
     base_position_path: str = ""
     base_position_stride: int = 0
@@ -106,13 +109,22 @@ def _iter_collection_objects_with_cb1(collection):
     yield from walk(collection, CB1_OVERRIDE_NONE)
 
 
-def _build_runtime_draw_part(obj, proxy_armature, part_id: int, cb1_override: str) -> RuntimeDrawPart:
+def _resolve_object_cb1_profile(obj, inherited_override: str) -> str:
+    raw_profile = str(getattr(obj, "bi_cb1_profile", "INHERIT") or "INHERIT").upper()
+    if raw_profile == "INHERIT":
+        return normalize_cb1_override(inherited_override, CB1_OVERRIDE_NONE)
+    return normalize_cb1_override(raw_profile, CB1_OVERRIDE_NONE)
+
+
+def _build_runtime_draw_part(obj, proxy_armature, _part_id: int, cb1_override: str) -> RuntimeDrawPart:
     payload = parse_draw_part_name(obj.name)
-    layout = build_part_layout_from_id(part_id)
     hash_value = payload["hash"]
     match_index_count = payload["match_index_count"]
     first_index = payload["first_index"]
     draw_key = build_draw_key(hash_value, match_index_count, first_index)
+    explicit_bone_source = getattr(obj, "bi_bone_source_armature", None)
+    if explicit_bone_source is not None and getattr(explicit_bone_source, "type", "") != "ARMATURE":
+        explicit_bone_source = None
     return RuntimeDrawPart(
         draw_key=draw_key,
         source_object=obj,
@@ -120,14 +132,17 @@ def _build_runtime_draw_part(obj, proxy_armature, part_id: int, cb1_override: st
         hash=hash_value,
         match_index_count=match_index_count,
         first_index=first_index,
-        part_id=int(part_id),
-        part_base=layout["part_base"],
-        part_size=layout["part_size"],
-        previous_offset=layout["previous_offset"],
-        previous_base=layout["previous_base"],
-        buffer_size=layout["buffer_size"],
         bone_namespace=str(getattr(obj, "name", "")),
+        match_priority=int(getattr(obj, "bi_match_priority", 50) or 50),
+        bone_enabled=bool(getattr(obj, "bi_bone_enabled", True)),
+        bone_source_armature=explicit_bone_source or proxy_armature,
+        bone_slot_map_json=str(getattr(obj, "bi_bone_slot_map_json", "") or ""),
+        skin_contract=str(getattr(obj, "bi_skin_contract", "TARGET_NUMERIC_GROUPS") or "TARGET_NUMERIC_GROUPS"),
+        morph_enabled=bool(getattr(obj, "bi_morph_enabled", False)),
+        morph_source_object=getattr(obj, "bi_morph_source_object", None),
         cb1_override=normalize_cb1_override(cb1_override, CB1_OVERRIDE_NONE),
+        cb1_profile=_resolve_object_cb1_profile(obj, cb1_override),
+        vb_layout_profile=str(getattr(obj, "bi_vb_layout_profile", "AUTO") or "AUTO"),
         buffer_correction_mode=str(getattr(obj, "bi_buffer_correction_mode", "")),
         base_position_path=str(getattr(obj, "bi_base_position_path", "") or ""),
         base_position_stride=int(getattr(obj, "bi_base_position_stride", 0) or 0),
@@ -167,9 +182,11 @@ def draw_parts_from_export_collection(collection) -> tuple[RuntimeDrawPart, ...]
     for obj, cb1_override in _iter_collection_objects_with_cb1(collection):
         if getattr(obj, "type", "") != "MESH":
             continue
-        proxy_armature = find_proxy_armature_for_object(obj)
-        if proxy_armature is None:
+        try:
+            parse_draw_part_name(obj.name)
+        except ValueError:
             continue
+        proxy_armature = find_proxy_armature_for_object(obj)
         candidates.append((obj, proxy_armature, cb1_override))
     return _build_draw_parts_from_candidates(candidates)
 
@@ -180,9 +197,11 @@ def draw_parts_from_selected_objects(context) -> tuple[RuntimeDrawPart, ...]:
     for obj in getattr(context, "selected_objects", []) or []:
         if getattr(obj, "type", "") != "MESH":
             continue
-        proxy_armature = find_proxy_armature_for_object(obj)
-        if proxy_armature is None:
+        try:
+            parse_draw_part_name(obj.name)
+        except ValueError:
             continue
+        proxy_armature = find_proxy_armature_for_object(obj)
         candidates.append((obj, proxy_armature, CB1_OVERRIDE_NONE))
     return _build_draw_parts_from_candidates(candidates)
 
@@ -221,11 +240,16 @@ def draw_part_manifest_rows(draw_parts) -> list[dict]:
             "hash": draw_part.hash,
             "match_index_count": int(draw_part.match_index_count),
             "first_index": int(draw_part.first_index),
-            "part_id": int(draw_part.part_id),
-            "part_base": int(draw_part.part_base),
-            "part_size": int(draw_part.part_size),
-            "previous_offset": int(draw_part.previous_offset),
             "cb1_override": draw_part.cb1_override,
+            "cb1_profile": draw_part.cb1_profile,
+            "match_priority": int(draw_part.match_priority),
+            "bone_enabled": bool(draw_part.bone_enabled),
+            "bone_source_armature": draw_part.bone_source_armature.name if draw_part.bone_source_armature else "",
+            "bone_slot_map_json": draw_part.bone_slot_map_json,
+            "skin_contract": draw_part.skin_contract,
+            "morph_enabled": bool(draw_part.morph_enabled),
+            "morph_source_object": draw_part.morph_source_object.name if draw_part.morph_source_object else "",
+            "vb_layout_profile": draw_part.vb_layout_profile,
             "buffer_correction_mode": draw_part.buffer_correction_mode,
             "base_position_path": draw_part.base_position_path,
             "base_position_stride": int(draw_part.base_position_stride),

@@ -17,6 +17,7 @@ from .animation_export import (
     write_shared_timeline_sidecar_files,
     write_tqs_animation_frame,
 )
+from .bone_payload_export import export_bone_payloads_for_draw_parts
 from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
 from .context import (
     apply_part_id_layout,
@@ -37,6 +38,7 @@ from .export import (
 )
 from .importer import apply_palette_segment_to_proxy_armature, resolve_palette_segment_window
 from .ini_export import write_generated_runtime_ini
+from .runtime_ini import write_runtime_ini_from_manifest
 from .io import (
     build_metadata_path_from_binary_path,
     load_palette_file,
@@ -717,10 +719,6 @@ def export_morph_for_draw_parts(
             morph_channel_mode = getattr(scene, "bi_morph_channel_mode", MORPH_CHANNEL_MODE_ANIMATED)
             morph_include_normals = bool(getattr(scene, "bi_morph_include_normals", True))
             morph_include_tangents = bool(getattr(scene, "bi_morph_include_tangents", False))
-            external_morph_source = getattr(scene, "bi_morph_source_object", None)
-            target_draw_key = str(getattr(scene, "bi_morph_target_draw_key", "") or "")
-            if target_draw_key == "__NONE__":
-                target_draw_key = ""
 
             try:
                 (
@@ -753,22 +751,17 @@ def export_morph_for_draw_parts(
                     if shared_path:
                         exported_files.append(shared_path)
 
-            morph_draw_parts = normalized_draw_parts
-            if external_morph_source is not None:
-                if not target_draw_key:
-                    raise ValueError("Choose a Target Draw Part when exporting an external Shape Key Source")
-                morph_draw_parts = tuple(
-                    draw_part for draw_part in normalized_draw_parts if draw_part.draw_key == target_draw_key
-                )
-                if not morph_draw_parts:
-                    raise ValueError(f"Target Draw Part not found: {target_draw_key}")
+            morph_draw_parts = tuple(
+                draw_part for draw_part in normalized_draw_parts
+                if bool(getattr(draw_part, "morph_enabled", False))
+            )
 
             for draw_part in morph_draw_parts:
                 try:
-                    source_mesh = external_morph_source if external_morph_source is not None else draw_part.source_object
+                    source_mesh = getattr(draw_part, "morph_source_object", None) or draw_part.source_object
                     morph_result = export_morph_mesh_for_proxy_armature(
                         context=context,
-                        proxy_armature=draw_part.proxy_armature,
+                        proxy_armature=draw_part.proxy_armature or draw_part.bone_source_armature,
                         source_mesh=source_mesh,
                         output_directory=output_directory,
                         clip_name=normalized_clip_name,
@@ -818,45 +811,40 @@ def export_morph_for_draw_parts(
                     exported_files.append(morph_manifest_path)
 
             try:
-                generated_ini_path = write_generated_runtime_ini(
+                export_manifest_path = write_export_manifest(
                     output_directory=output_directory,
                     clip_name=normalized_clip_name,
+                    clip_id=clip_id,
+                    draw_parts=normalized_draw_parts,
                     export_results=(),
                     morph_results=tuple(morph_results),
-                    cb1_override_by_mesh_key=cb1_override_by_mesh_key,
-                    draw_parts=normalized_draw_parts,
+                    clip_metadata={
+                        "frame_start": int(frame_start),
+                        "frame_end": int(frame_end),
+                        "frame_step": int(frame_step),
+                        "frame_count": int(sampled_frames),
+                        "fps": float(fps),
+                        "default_ticks_per_sample": max(int(presents_per_step), 1),
+                        "default_loop_start_sample": 0,
+                        "default_loop_end_sample": max(int(sampled_frames) - 1, 0),
+                        "timeline_static_path": timeline_static_path,
+                        "master_playback_path": master_playback_path,
+                    },
                 )
+            except Exception as exc:
+                failed_armatures.append(f"{normalized_clip_name} export manifest: {exc}")
+            else:
+                if export_manifest_path:
+                    exported_files.append(export_manifest_path)
+
+            try:
+                generated_ini_path = write_runtime_ini_from_manifest(output_directory, normalized_clip_name)
             except Exception as exc:
                 failed_armatures.append(f"{normalized_clip_name} generated ini: {exc}")
                 generated_ini_path = ""
             else:
                 if generated_ini_path:
                     exported_files.append(generated_ini_path)
-
-            try:
-                export_manifest_path = write_export_manifest(
-                    output_directory=output_directory,
-                    clip_name=normalized_clip_name,
-                    clip_id=clip_id,
-                    draw_parts=normalized_draw_parts,
-                export_results=(),
-                morph_results=tuple(morph_results),
-                clip_metadata={
-                    "frame_start": int(frame_start),
-                    "frame_end": int(frame_end),
-                    "frame_step": int(frame_step),
-                    "frame_count": int(sampled_frames),
-                    "fps": float(fps),
-                    "default_ticks_per_sample": max(int(presents_per_step), 1),
-                    "default_loop_start_sample": 0,
-                    "default_loop_end_sample": max(int(sampled_frames) - 1, 0),
-                },
-            )
-            except Exception as exc:
-                failed_armatures.append(f"{normalized_clip_name} export manifest: {exc}")
-            else:
-                if export_manifest_path:
-                    exported_files.append(export_manifest_path)
     finally:
         if scene is not None:
             scene.frame_set(original_frame)
@@ -881,6 +869,78 @@ def export_morph_for_draw_parts(
     )
 
 
+def export_bone_payloads_for_selected_draw_parts(
+    context,
+    output_directory,
+    clip_name,
+    clip_id,
+    frame_start,
+    frame_end,
+    frame_step,
+    fps,
+    write_metadata=True,
+):
+    """Export the manifest-driven per-DrawPart Bone Payload route."""
+    draw_parts = build_target_draw_parts(context)
+    payload_result = export_bone_payloads_for_draw_parts(
+        context=context,
+        draw_parts=draw_parts,
+        output_directory=output_directory,
+        clip_name=clip_name,
+        clip_id=clip_id,
+        frame_start=frame_start,
+        frame_end=frame_end,
+        frame_step=frame_step,
+        fps=fps,
+        write_metadata=write_metadata,
+    )
+    export_results = tuple(payload_result["results"])
+    exported_files = []
+    for result in export_results:
+        exported_files.extend((result.tqs_path, result.bind_path, result.static_clip_path))
+        if result.debug_metadata_path:
+            exported_files.append(result.debug_metadata_path)
+    for shared_path in (
+        payload_result["timeline_static_path"],
+        payload_result["master_playback_path"],
+        payload_result["clip_metadata_path"],
+    ):
+        if shared_path:
+            exported_files.append(shared_path)
+
+    manifest_path = write_export_manifest(
+        output_directory=output_directory,
+        clip_name=clip_name,
+        clip_id=clip_id,
+        draw_parts=draw_parts,
+        export_results=export_results,
+        morph_results=(),
+        clip_metadata=payload_result["clip_metadata"],
+    )
+    if manifest_path:
+        exported_files.append(manifest_path)
+    generated_ini_path = write_runtime_ini_from_manifest(output_directory, clip_name)
+    if generated_ini_path:
+        exported_files.append(generated_ini_path)
+
+    return BatchAnimationExportResult(
+        output_directory=bpy.path.abspath(output_directory or "//"),
+        clip_name=normalize_clip_name(clip_name),
+        clip_id=int(clip_id),
+        selected_armatures=len(draw_parts),
+        exported_armatures=len(export_results),
+        total_frames=sum(result.frame_count for result in export_results),
+        total_exported_bones=sum(result.bone_count for result in export_results),
+        sampled_frames=int(payload_result["sampled_frames"]),
+        elapsed_seconds=float(payload_result["elapsed_seconds"]),
+        failed_armatures=tuple(payload_result["failures"]),
+        exported_files=tuple(exported_files),
+        timeline_static_path=payload_result["timeline_static_path"],
+        master_playback_path=payload_result["master_playback_path"],
+        generated_ini_path=generated_ini_path,
+    )
+
+
 def export_animation_for_selected_proxy_armatures(
     context,
     output_directory,
@@ -895,10 +955,9 @@ def export_animation_for_selected_proxy_armatures(
     default_loop_end=-1,
     write_metadata=True,
 ):
-    """Export standalone RX clip buffers for the current target draw-part set."""
-    return export_animation_for_draw_parts(
+    """Export standalone RX Bone Payload buffers for the current target DrawPart set."""
+    return export_bone_payloads_for_selected_draw_parts(
         context,
-        build_target_draw_parts(context),
         output_directory,
         clip_name,
         clip_id,
@@ -906,9 +965,6 @@ def export_animation_for_selected_proxy_armatures(
         frame_end,
         frame_step,
         fps,
-        presents_per_step,
-        default_loop_start,
-        default_loop_end,
         write_metadata,
     )
 

@@ -30,6 +30,15 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_buffer_correction_mode"),
     (bpy.types.Object, "bi_base_position_path"),
     (bpy.types.Object, "bi_base_position_stride"),
+    (bpy.types.Object, "bi_match_priority"),
+    (bpy.types.Object, "bi_bone_enabled"),
+    (bpy.types.Object, "bi_bone_source_armature"),
+    (bpy.types.Object, "bi_bone_slot_map_json"),
+    (bpy.types.Object, "bi_skin_contract"),
+    (bpy.types.Object, "bi_morph_enabled"),
+    (bpy.types.Object, "bi_morph_source_object"),
+    (bpy.types.Object, "bi_vb_layout_profile"),
+    (bpy.types.Object, "bi_cb1_profile"),
     (bpy.types.Collection, "bi_cb1_override"),
     (bpy.types.Scene, "bi_output_path"),
     (bpy.types.Scene, "bi_export_collection"),
@@ -67,7 +76,7 @@ def _draw_part_enum_items(_self, context):
     return [
         (
             draw_part.draw_key,
-            f"{draw_part.source_object.name}  #{draw_part.part_id}",
+            draw_part.source_object.name,
             f"{draw_part.hash} | indices={draw_part.match_index_count} | first={draw_part.first_index}",
         )
         for draw_part in draw_parts
@@ -185,6 +194,69 @@ def register_addon_properties():
         default=0,
         min=0,
         description="Stride of the explicit base Position buffer. Use 16 for packed EFMI vb0 or 40 for PNTA40.",
+    )
+    bpy.types.Object.bi_match_priority = bpy.props.IntProperty(
+        name="Match Priority",
+        default=50,
+        description="TextureOverride match_priority emitted for this DrawPart.",
+    )
+    bpy.types.Object.bi_bone_enabled = bpy.props.BoolProperty(
+        name="Bone Payload",
+        default=True,
+        description="Export a Bone Payload for this DrawPart when a valid Bone Source and Bone Slot Map are available.",
+    )
+    bpy.types.Object.bi_bone_source_armature = bpy.props.PointerProperty(
+        name="Bone Source",
+        type=bpy.types.Object,
+        description="Armature sampled for this DrawPart's Bone Payload. If unset, the linked proxy armature is used.",
+    )
+    bpy.types.Object.bi_bone_slot_map_json = bpy.props.StringProperty(
+        name="Bone Slot Map JSON",
+        default="",
+        description=(
+            "Optional JSON list mapping target slots to source bones. "
+            "Example: [{\"slot_id\":0,\"source_bone\":\"Head\"}]. "
+            "If empty, the exporter only auto-maps numeric/proxy bone names."
+        ),
+    )
+    bpy.types.Object.bi_skin_contract = bpy.props.EnumProperty(
+        name="Skin Contract",
+        items=[
+            ("TARGET_NUMERIC_GROUPS", "Target Numeric Groups", "Target DrawPart numeric vertex groups define the runtime slot order"),
+            ("SOURCE_ARMATURE_SLOTS", "Source Armature Slots", "Source armature proxy slot metadata defines the runtime slot order"),
+        ],
+        default="TARGET_NUMERIC_GROUPS",
+        description="Defines which slot namespace is the runtime truth for this DrawPart.",
+    )
+    bpy.types.Object.bi_morph_enabled = bpy.props.BoolProperty(
+        name="Morph Payload",
+        default=False,
+        description="Export a Morph Payload for this DrawPart.",
+    )
+    bpy.types.Object.bi_morph_source_object = bpy.props.PointerProperty(
+        name="Morph Source",
+        type=bpy.types.Object,
+        description="Shape-key source object for this DrawPart. If unset, the DrawPart object is used.",
+    )
+    bpy.types.Object.bi_vb_layout_profile = bpy.props.EnumProperty(
+        name="VB Layout",
+        items=[
+            ("AUTO", "Auto", "Infer the base Position layout from stride"),
+            ("PACKED16", "Packed16", "EFMI packed Position buffer: float3 position + packed normal"),
+            ("PNTA40", "PNTA40", "Explicit position/normal/tangent layout with stride 40"),
+        ],
+        default="AUTO",
+        description="Runtime base Position layout profile used by morph INI generation.",
+    )
+    bpy.types.Object.bi_cb1_profile = bpy.props.EnumProperty(
+        name="CB1 Profile",
+        items=[
+            ("INHERIT", "Inherit", "Inherit the collection CB1 profile"),
+            ("NONE", "None", "No special CB1 patch"),
+            ("EYELASH", "Eyelash", "Patch the eyelash/eye CB1 branch before redirecting CB1"),
+        ],
+        default="INHERIT",
+        description="Per-DrawPart CB1 profile. Inherit uses the collection profile.",
     )
     bpy.types.Collection.bi_cb1_override = bpy.props.EnumProperty(
         name="RX CB1 Override",
