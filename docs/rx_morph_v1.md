@@ -230,7 +230,16 @@ The current bone payload exporter records:
 - `pose_sample_seconds`: time spent reading/decomposing sampled pose matrices.
 - `write_payloads_seconds`: time spent writing per-DrawPart bone buffers.
 - `sample_isolation`: whether non-essential meshes were hidden during bone sampling.
-- `sample_groups`: cache hit/miss, sampled bone count, sample count, and optional `.npy` cache timings.
+- `sample_groups`: `BoneSampleBank` groups with cache hit/miss, sampled bone count, sample count, and optional `.npy` cache timings.
+
+`BoneSampleBank` is the required seam for future speed work. Optimizations such as default `.npy` cache, baked-action sampling, or deeper depsgraph isolation should sit behind that module instead of spreading through `Bone Payload` writing or manifest rendering.
+
+Current validation notes:
+
+- A 3-sample Blender MCP probe over 14 DrawParts exported 657 total Bone Payload slots from one `BoneSampleBank` group with 643 unique sampled bones.
+- The observed first-run hotspot remains Blender scene evaluation: `frame_set_seconds` dominated live sampling while pose matrix decomposition was comparatively small.
+- A two-run `.npy` cache probe confirmed second-run cache hits avoid Blender `frame_set` entirely, but cache-key construction is still visible on tiny clips.
+- Baked-action fast path is not safe by default for the current RX scene because the active armatures still contain pose constraints. It should remain an explicit future mode with validation, not an automatic replacement for scene evaluation.
 
 For repeated local validation exports, enable the opt-in bone sample cache:
 

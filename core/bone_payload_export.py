@@ -12,6 +12,7 @@ from time import perf_counter
 import bpy
 import numpy as np
 
+from .bone_sample_bank import build_bone_sample_plan, select_payload_samples
 from .animation_export import (
     build_master_playback_uint4_rows,
     build_timeline_static_uint4_rows,
@@ -619,7 +620,7 @@ def _sample_pose_tq_group(context, exported_frames, sample_entries, correction_m
 
 
 def _write_bone_anim_from_sample_cache(path: str, sample_cache, sample_indices):
-    selected_samples = np.asarray(sample_cache[:, list(sample_indices), :], dtype="<f4")
+    selected_samples = select_payload_samples(sample_cache, sample_indices)
     with open(path, "wb") as binary_file:
         selected_samples.tofile(binary_file)
 
@@ -682,23 +683,14 @@ def export_bone_payloads_for_draw_parts(
     timings["prepare_payloads_seconds"] = perf_counter() - prepare_start
 
     sample_group_start = perf_counter()
-    sample_groups = {}
-    for payload in prepared_payloads:
-        group_key = str(payload["correction_mode"])
-        group = sample_groups.setdefault(
-            group_key,
-            {
-                "correction_matrix": payload["correction_matrix"],
-                "sample_entries_by_key": {},
-            },
-        )
-        for binding in payload["bindings"]:
-            sample_key = _binding_sample_key(binding)
-            group["sample_entries_by_key"][sample_key] = (
-                sample_key,
-                binding.source_armature,
-                binding.source_bone,
-            )
+    sample_plan = build_bone_sample_plan(prepared_payloads, _binding_sample_key)
+    sample_groups = {
+        group_key: {
+            "correction_matrix": group.correction_matrix,
+            "sample_entries_by_key": {entry[0]: entry for entry in group.sample_entries},
+        }
+        for group_key, group in sample_plan.groups.items()
+    }
     timings["build_sample_groups_seconds"] = perf_counter() - sample_group_start
 
     original_frame = context.scene.frame_current
@@ -711,13 +703,8 @@ def export_bone_payloads_for_draw_parts(
     with _temporary_mesh_sampling_isolation(context, sample_groups, len(exported_frames)) as sample_isolation:
         try:
             for group_key, group in sample_groups.items():
-                sample_entries = tuple(
-                    group["sample_entries_by_key"][sample_key]
-                    for sample_key in sorted(
-                        group["sample_entries_by_key"],
-                        key=lambda item: (item[1], item[2]),
-                    )
-                )
+                group_plan = sample_plan.groups[group_key]
+                sample_entries = group_plan.sample_entries
                 try:
                     expected_shape = (len(exported_frames), len(sample_entries), TQ_FLOATS_PER_BONE)
                     cache_hash = ""
@@ -784,7 +771,7 @@ def export_bone_payloads_for_draw_parts(
                             "cache_write_seconds": 0.0,
                         }
                     sample_caches[group_key] = {
-                        "index_by_key": {entry[0]: index for index, entry in enumerate(sample_entries)},
+                        "index_by_key": group_plan.index_by_key,
                         "samples": samples,
                         "timing": sample_timing,
                     }
@@ -807,10 +794,7 @@ def export_bone_payloads_for_draw_parts(
                 failures.append(f"{draw_part.draw_key}: {sample_failures[group_key]}")
                 continue
             sample_cache = sample_caches[group_key]
-            sample_indices = tuple(
-                sample_cache["index_by_key"][_binding_sample_key(binding)]
-                for binding in payload["bindings"]
-            )
+            sample_indices = sample_plan.payloads[draw_part.draw_key].sample_indices
             payload_timing = {
                 "draw_key": draw_part.draw_key,
                 "bone_count": len(payload["bindings"]),

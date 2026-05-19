@@ -131,6 +131,20 @@ write current and previous local palette rows
 
 The shader should be named `update_bone_palette_tq_cs.hlsl`. It replaces the old global-slice `copy_clip_to_faket0_cs.hlsl` path.
 
+Exporter flow:
+
+```text
+DrawParts -> BoneSampleBank -> per-DrawPart Bone Payload files
+```
+
+`BoneSampleBank` is the exporter-side sampling module. It groups DrawParts by compatible correction mode, deduplicates source bones inside each group, samples each unique source bone once per Clip sample, then slices the shared sample matrix back into each DrawPart's slot order. This preserves local Bone Payload files while avoiding repeated Blender `frame_set`/pose evaluation for the same source bones.
+
+Performance rule:
+
+```text
+sample once by source-bone group, write many DrawPart payloads
+```
+
 ## Morph Payload
 
 Morph Payload is local to one DrawPart and independent from Bone Payload.
