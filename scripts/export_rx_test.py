@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import sys
@@ -31,7 +30,7 @@ TARGETS = {
 }
 
 
-def _register_addons():
+def _register_addon():
     if REPO_PARENT not in sys.path:
         sys.path.insert(0, REPO_PARENT)
 
@@ -42,28 +41,7 @@ def _register_addons():
     except Exception:
         pass
     bone_importer.register()
-
-    try:
-        bone_merge = importlib.import_module("3dmigoto_bone_merge")
-        for module_name in (
-            "3dmigoto_bone_merge.core.export_buffers",
-            "3dmigoto_bone_merge.core.export_prepare",
-        ):
-            loaded = sys.modules.get(module_name)
-            if loaded is not None:
-                importlib.reload(loaded)
-        try:
-            bone_merge.unregister()
-        except Exception:
-            pass
-        try:
-            bone_merge.register()
-        except Exception:
-            pass
-    except Exception:
-        bone_merge = None
-
-    return bone_importer, bone_merge
+    return bone_importer
 
 
 def _remove_collection(collection_name: str):
@@ -185,12 +163,10 @@ def _geometry_key(record: dict) -> str:
     return f"{record.get('ib_hash', '')}-{int(record.get('match_index_count', 0) or 0)}-{int(record.get('match_first_index', 0) or 0)}"
 
 
-def _export_geometry_with_bmc():
-    from importlib import import_module
+def _export_geometry_with_rx():
+    from bone_importer.core.rx_geometry_export.prepare import prepare_geometry_export_collection
 
-    prepare_export_collection = import_module("3dmigoto_bone_merge.core.export_prepare").prepare_export_collection
-
-    root = _new_collection("RX BMC Temp Export")
+    root = _new_collection("RX Geometry Temp Export")
     target_builds = {}
     for target_name, config in TARGETS.items():
         source = bpy.data.objects.get(config["source"])
@@ -200,16 +176,11 @@ def _export_geometry_with_bmc():
         root.children.link(region)
         target_builds[target_name] = _build_numeric_export_duplicate(source, target_name, region)
 
-    result = prepare_export_collection(
+    result = prepare_geometry_export_collection(
         context=bpy.context,
         source_collection=root,
-        build_collection=None,
         output_dir=OUTPUT_DIR,
-        internal_manifest_dir=None,
         capture_manifest_path=BMC_CAPTURE_MANIFEST,
-        generate_ini=False,
-        simple_override=False,
-        filter_residual=False,
     )
     with open(result["manifest_path"], "r", encoding="utf-8") as manifest_file:
         bmc_manifest = json.load(manifest_file)
@@ -297,9 +268,9 @@ def _reset_rx_manifest():
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     _reset_rx_manifest()
-    _register_addons()
+    _register_addon()
 
-    geometry_export = _export_geometry_with_bmc()
+    geometry_export = _export_geometry_with_rx()
     configured = _configure_runtime_draw_parts(geometry_export)
 
     from bone_importer.core.draw_part import build_target_draw_parts
