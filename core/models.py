@@ -129,6 +129,7 @@ class BatchAnimationExportResult:
     total_morph_channels: int = 0
     morph_manifest_path: str = ""
     generated_ini_path: str = ""
+    performance: dict | None = None
 
 
 @dataclass(frozen=True)

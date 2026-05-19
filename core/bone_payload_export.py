@@ -321,8 +321,18 @@ def _binding_sample_key(binding):
 def _sample_pose_tq_group(context, exported_frames, sample_entries, correction_matrix):
     samples = np.empty((len(exported_frames), len(sample_entries), TQ_FLOATS_PER_BONE), dtype="<f4")
     scene = context.scene
+    timing = {
+        "sample_count": len(exported_frames),
+        "unique_bones": len(sample_entries),
+        "frame_set_seconds": 0.0,
+        "pose_sample_seconds": 0.0,
+    }
+    total_start = perf_counter()
     for frame_index, frame_number in enumerate(exported_frames):
+        frame_set_start = perf_counter()
         scene.frame_set(frame_number)
+        timing["frame_set_seconds"] += perf_counter() - frame_set_start
+        pose_sample_start = perf_counter()
         for bone_index, (_key, source_armature, source_bone) in enumerate(sample_entries):
             pose_bone = source_armature.pose.bones.get(source_bone)
             if pose_bone is None:
@@ -338,7 +348,10 @@ def _sample_pose_tq_group(context, exported_frames, sample_entries, correction_m
             samples[frame_index, bone_index, 5] = rotation.y
             samples[frame_index, bone_index, 6] = rotation.z
             samples[frame_index, bone_index, 7] = rotation.w
-    return samples
+        timing["pose_sample_seconds"] += perf_counter() - pose_sample_start
+    timing["total_seconds"] = perf_counter() - total_start
+    timing["sample_bone_pairs"] = len(exported_frames) * len(sample_entries)
+    return samples, timing
 
 
 def _write_bone_anim_from_sample_cache(path: str, sample_cache, sample_indices):
@@ -366,6 +379,8 @@ def export_bone_payloads_for_draw_parts(
     results = []
     failures = []
     prepared_payloads = []
+    timings = {}
+    prepare_start = perf_counter()
     for draw_part in normalized_draw_parts:
         if not bool(getattr(draw_part, "bone_enabled", True)):
             continue
@@ -400,7 +415,9 @@ def export_bone_payloads_for_draw_parts(
         except Exception as exc:
             failures.append(f"{draw_part.draw_key}: {exc}")
             continue
+    timings["prepare_payloads_seconds"] = perf_counter() - prepare_start
 
+    sample_group_start = perf_counter()
     sample_groups = {}
     for payload in prepared_payloads:
         group_key = str(payload["correction_mode"])
@@ -418,10 +435,13 @@ def export_bone_payloads_for_draw_parts(
                 binding.source_armature,
                 binding.source_bone,
             )
+    timings["build_sample_groups_seconds"] = perf_counter() - sample_group_start
 
     original_frame = context.scene.frame_current
     sample_caches = {}
     sample_failures = {}
+    sample_group_timings = []
+    sample_total_start = perf_counter()
     try:
         for group_key, group in sample_groups.items():
             sample_entries = tuple(
@@ -432,20 +452,28 @@ def export_bone_payloads_for_draw_parts(
                 )
             )
             try:
+                samples, sample_timing = _sample_pose_tq_group(
+                    context,
+                    exported_frames,
+                    sample_entries,
+                    group["correction_matrix"],
+                )
                 sample_caches[group_key] = {
                     "index_by_key": {entry[0]: index for index, entry in enumerate(sample_entries)},
-                    "samples": _sample_pose_tq_group(
-                        context,
-                        exported_frames,
-                        sample_entries,
-                        group["correction_matrix"],
-                    ),
+                    "samples": samples,
+                    "timing": sample_timing,
                 }
+                sample_group_timings.append({"sample_group": group_key, **sample_timing})
             except Exception as exc:
                 sample_failures[group_key] = str(exc)
     finally:
+        timings["sample_total_seconds"] = perf_counter() - sample_total_start
+        restore_start = perf_counter()
         context.scene.frame_set(original_frame)
+        timings["restore_frame_seconds"] = perf_counter() - restore_start
 
+    write_payloads_start = perf_counter()
+    payload_write_timings = []
     for payload in prepared_payloads:
         draw_part = payload["draw_part"]
         try:
@@ -458,16 +486,26 @@ def export_bone_payloads_for_draw_parts(
                 sample_cache["index_by_key"][_binding_sample_key(binding)]
                 for binding in payload["bindings"]
             )
+            payload_timing = {
+                "draw_key": draw_part.draw_key,
+                "bone_count": len(payload["bindings"]),
+            }
+            payload_start = perf_counter()
             _write_bone_anim_from_sample_cache(
                 payload["bone_anim_path"],
                 sample_cache["samples"],
                 sample_indices,
             )
+            payload_timing["anim_write_seconds"] = perf_counter() - payload_start
+            bind_start = perf_counter()
             _write_bone_bind_buffer(payload["bone_bind_path"], payload["binding_pose_bones"])
+            payload_timing["bind_write_seconds"] = perf_counter() - bind_start
+            static_start = perf_counter()
             write_uint4_buffer_rows(
                 payload["bone_static_path"],
                 build_bone_static_uint4_rows(payload["slot_ids"], len(exported_frames)),
             )
+            payload_timing["static_write_seconds"] = perf_counter() - static_start
             metadata = _build_bone_payload_metadata(
                 draw_part,
                 payload["bindings"],
@@ -488,9 +526,22 @@ def export_bone_payloads_for_draw_parts(
                 "unique_group_bones": int(sample_cache["samples"].shape[1]),
             }
             if write_metadata:
+                metadata_start = perf_counter()
                 write_json_file(payload["bone_metadata_path"], metadata)
+                payload_timing["metadata_write_seconds"] = perf_counter() - metadata_start
             else:
                 payload["bone_metadata_path"] = ""
+                payload_timing["metadata_write_seconds"] = 0.0
+            payload_timing["total_write_seconds"] = sum(
+                float(payload_timing.get(key, 0.0))
+                for key in (
+                    "anim_write_seconds",
+                    "bind_write_seconds",
+                    "static_write_seconds",
+                    "metadata_write_seconds",
+                )
+            )
+            payload_write_timings.append(payload_timing)
             results.append(
                 AnimationExportResult(
                     armature_name=", ".join(metadata["source_armatures"]),
@@ -505,7 +556,9 @@ def export_bone_payloads_for_draw_parts(
             )
         except Exception as exc:
             failures.append(f"{draw_part.draw_key}: {exc}")
+    timings["write_payloads_seconds"] = perf_counter() - write_payloads_start
 
+    shared_clip_start = perf_counter()
     timeline_static_path, master_playback_path, clip_metadata_path, clip_metadata = write_shared_clip_buffers(
         output_directory=output_directory,
         clip_name=clip_name,
@@ -515,7 +568,27 @@ def export_bone_payloads_for_draw_parts(
         ticks_per_sample=1,
         write_metadata=write_metadata,
     )
+    timings["shared_clip_seconds"] = perf_counter() - shared_clip_start
     elapsed = perf_counter() - start
+    timings["total_seconds"] = elapsed
+    sample_group_bones = [
+        len(group["sample_entries_by_key"])
+        for group in sample_groups.values()
+    ]
+    performance = {
+        "format": "rx_bone_payload_perf_v1",
+        "draw_part_count": len(normalized_draw_parts),
+        "prepared_payload_count": len(prepared_payloads),
+        "exported_payload_count": len(results),
+        "sample_count": len(exported_frames),
+        "sample_group_count": len(sample_groups),
+        "unique_sampled_bones_by_group": sample_group_bones,
+        "estimated_sample_bone_pairs": sum(len(exported_frames) * count for count in sample_group_bones),
+        "total_payload_bone_slots": sum(len(payload["bindings"]) for payload in prepared_payloads),
+        "timings_seconds": timings,
+        "sample_groups": sample_group_timings,
+        "payload_writes": payload_write_timings,
+    }
     return {
         "results": tuple(results),
         "failures": tuple(failures),
@@ -525,4 +598,5 @@ def export_bone_payloads_for_draw_parts(
         "clip_metadata": clip_metadata,
         "elapsed_seconds": elapsed,
         "sampled_frames": len(exported_frames),
+        "performance": performance,
     }

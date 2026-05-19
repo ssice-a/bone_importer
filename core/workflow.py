@@ -938,6 +938,7 @@ def export_bone_payloads_for_selected_draw_parts(
         timeline_static_path=payload_result["timeline_static_path"],
         master_playback_path=payload_result["master_playback_path"],
         generated_ini_path=generated_ini_path,
+        performance=dict(payload_result.get("performance", {}) or {}),
     )
 
 

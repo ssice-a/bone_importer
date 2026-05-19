@@ -17,8 +17,12 @@ import bpy
 
 
 REPO_PARENT = r"E:\vscode"
-OUTPUT_DIR = r"E:\XXMI\EFMI\Mods\RX"
+DEFAULT_OUTPUT_DIR = r"E:\XXMI\EFMI\Mods\RX"
+OUTPUT_DIR = os.environ.get("RX_EXPORT_OUTPUT_DIR", DEFAULT_OUTPUT_DIR)
 BMC_CAPTURE_MANIFEST = r"E:\XXMI\EFMI\Mods\lxi\capture_manifest.json"
+DEFAULT_FRAME_START = 0
+DEFAULT_FRAME_END = 5670
+DEFAULT_FRAME_STEP = 1
 
 SOURCE_COLLECTION_NAME = "BMC Export Sources"
 PROXY_ARMATURE_NAME = "RX_SharedProxy"
@@ -37,6 +41,23 @@ REPLACEMENT_GEOMETRY = {
         "cb1": "EYELASH",
     },
 }
+
+
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name, "")
+    if not raw_value:
+        return int(default)
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer, got {raw_value!r}") from exc
+
+
+def _write_json(path: str, payload: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as json_file:
+        json.dump(payload, json_file, indent=2, ensure_ascii=False)
+        json_file.write("\n")
 
 
 def _register_addon():
@@ -181,9 +202,9 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
     scene.bi_animation_output_dir = OUTPUT_DIR
     scene.bi_animation_clip_name = "rxanimin"
     scene.bi_animation_clip_id = 0
-    scene.bi_animation_frame_start = 0
-    scene.bi_animation_frame_end = 5670
-    scene.bi_animation_frame_step = 1
+    scene.bi_animation_frame_start = _env_int("RX_EXPORT_FRAME_START", DEFAULT_FRAME_START)
+    scene.bi_animation_frame_end = _env_int("RX_EXPORT_FRAME_END", DEFAULT_FRAME_END)
+    scene.bi_animation_frame_step = max(_env_int("RX_EXPORT_FRAME_STEP", DEFAULT_FRAME_STEP), 1)
     scene.bi_animation_fps = float(scene.render.fps or 30)
     scene.bi_morph_include_normals = True
     scene.bi_morph_include_tangents = True
@@ -243,13 +264,23 @@ def _reset_rx_manifest():
 
 
 def main():
+    total_start = time.perf_counter()
+    timings = {}
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    stage_start = time.perf_counter()
     _reset_rx_manifest()
     _register_addon()
+    timings["setup_seconds"] = time.perf_counter() - stage_start
 
+    stage_start = time.perf_counter()
     runtime_targets = _collect_runtime_targets()
+    timings["collect_runtime_targets_seconds"] = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     geometry_export = _export_geometry_with_rx(runtime_targets)
+    timings["geometry_export_seconds"] = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     configured = _configure_runtime_draw_parts(geometry_export, runtime_targets)
+    timings["configure_draw_parts_seconds"] = time.perf_counter() - stage_start
 
     from bone_importer.core.draw_part import build_target_draw_parts
     from bone_importer.core.manifest import write_export_manifest
@@ -259,7 +290,10 @@ def main():
     )
 
     scene = bpy.context.scene
+    stage_start = time.perf_counter()
     draw_parts = build_target_draw_parts(bpy.context)
+    timings["build_draw_parts_seconds"] = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     write_export_manifest(
         output_directory=scene.bi_animation_output_dir,
         clip_name=scene.bi_animation_clip_name,
@@ -267,8 +301,9 @@ def main():
         draw_parts=draw_parts,
         geometry_results=tuple(geometry_export["geometry_records"]),
     )
+    timings["seed_manifest_seconds"] = time.perf_counter() - stage_start
 
-    start = time.time()
+    stage_start = time.perf_counter()
     bone_result = export_bone_payloads_for_selected_draw_parts(
         bpy.context,
         output_directory=scene.bi_animation_output_dir,
@@ -280,6 +315,8 @@ def main():
         fps=scene.bi_animation_fps,
         write_metadata=True,
     )
+    timings["bone_export_seconds"] = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     morph_result = export_morph_for_selected_proxy_armatures(
         bpy.context,
         output_directory=scene.bi_animation_output_dir,
@@ -294,11 +331,43 @@ def main():
         default_loop_end=-1,
         write_metadata=True,
     )
+    timings["morph_export_seconds"] = time.perf_counter() - stage_start
+    total_elapsed = time.perf_counter() - total_start
+    timings["total_seconds"] = total_elapsed
     failed = [*list(bone_result.failed_armatures), *list(morph_result.failed_armatures)]
+    perf_report_path = os.path.join(OUTPUT_DIR, "rx_export_perf.json")
+    perf_report = {
+        "format": "rx_export_perf_v1",
+        "output_dir": OUTPUT_DIR,
+        "clip_name": scene.bi_animation_clip_name,
+        "frame_start": int(scene.bi_animation_frame_start),
+        "frame_end": int(scene.bi_animation_frame_end),
+        "frame_step": int(scene.bi_animation_frame_step),
+        "sample_count": int(bone_result.sampled_frames or morph_result.sampled_frames),
+        "runtime_targets": len(runtime_targets),
+        "draw_parts": len(draw_parts),
+        "geometry_records": len(geometry_export["geometry_records"]),
+        "exported_bone_parts": bone_result.exported_armatures,
+        "total_exported_bones": bone_result.total_exported_bones,
+        "exported_morph_meshes": morph_result.exported_morph_meshes,
+        "total_morph_channels": morph_result.total_morph_channels,
+        "failed": failed,
+        "timings_seconds": timings,
+        "geometry_performance": dict(geometry_export["result"].get("performance", {}) or {}),
+        "bone_performance": dict(bone_result.performance or {}),
+        "morph_performance": {
+            "elapsed_seconds": float(morph_result.elapsed_seconds),
+            "sampled_frames": int(morph_result.sampled_frames),
+            "exported_morph_meshes": int(morph_result.exported_morph_meshes),
+            "total_morph_channels": int(morph_result.total_morph_channels),
+        },
+    }
+    _write_json(perf_report_path, perf_report)
     payload = {
         "ok": not failed,
         "configured": configured,
-        "elapsed_wall": time.time() - start,
+        "elapsed_wall": total_elapsed,
+        "perf_report": perf_report_path,
         "geometry_manifest": geometry_export["result"]["manifest_path"],
         "geometry_records": len(geometry_export["geometry_records"]),
         "runtime_targets": len(runtime_targets),
