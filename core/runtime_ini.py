@@ -16,8 +16,28 @@ def _basename(path: str) -> str:
     return os.path.basename(str(path or ""))
 
 
+def _ini_filename(path: str, output_directory: str = "") -> str:
+    raw_path = str(path or "")
+    if not raw_path:
+        return ""
+    absolute_path = os.path.abspath(raw_path)
+    if output_directory:
+        absolute_root = os.path.abspath(output_directory)
+        try:
+            relative_path = os.path.relpath(absolute_path, absolute_root)
+        except ValueError:
+            relative_path = ""
+        if relative_path and not relative_path.startswith(".."):
+            return relative_path.replace("/", "\\")
+    return raw_path.replace("/", "\\")
+
+
 def _resource_key(draw_key: str) -> str:
     return sanitize_export_name(draw_key, "draw_part")
+
+
+def _geometry_resource_suffix(record: dict) -> str:
+    return sanitize_export_name(str(record.get("resource_suffix", "") or ""), "geometry")
 
 
 def resolve_runtime_ini_path(output_directory: str, clip_name: str) -> str:
@@ -25,7 +45,7 @@ def resolve_runtime_ini_path(output_directory: str, clip_name: str) -> str:
     return os.path.join(os.path.abspath(output_directory or "."), f"{safe_clip_name}.ini")
 
 
-def _append_global_resources(lines: list[str], manifest: dict, clip_name: str):
+def _append_global_resources(lines: list[str], manifest: dict, clip_name: str, output_directory: str):
     clip = manifest.get("clips", {}).get(normalize_clip_name(clip_name), {})
     timeline_path = clip.get("timeline_static", "") or f"{sanitize_export_name(clip_name, 'rxanimin')}_timeline_static.buf"
     master_path = clip.get("master_playback", "") or f"{sanitize_export_name(clip_name, 'rxanimin')}_master_playback.buf"
@@ -33,17 +53,17 @@ def _append_global_resources(lines: list[str], manifest: dict, clip_name: str):
     _line(lines, "[ResourceTimelineStatic]")
     _line(lines, "type = StructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(timeline_path)}")
+    _line(lines, f"filename = {_ini_filename(timeline_path, output_directory)}")
     _line(lines)
     _line(lines, "[ResourceMasterPlayback]")
     _line(lines, "type = RWStructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(master_path)}")
+    _line(lines, f"filename = {_ini_filename(master_path, output_directory)}")
     _line(lines)
     _line(lines, "[ResourceMasterPlayback_SRV]")
     _line(lines, "type = StructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(master_path)}")
+    _line(lines, f"filename = {_ini_filename(master_path, output_directory)}")
     _line(lines)
     _line(lines, "[CustomShader_UpdateBonePaletteTQ]")
     _line(lines, "cs = hlsl\\update_bone_palette_tq_cs.hlsl")
@@ -62,22 +82,22 @@ def _append_global_resources(lines: list[str], manifest: dict, clip_name: str):
     _line(lines)
 
 
-def _append_bone_resources(lines: list[str], draw_key: str, payload: dict):
+def _append_bone_resources(lines: list[str], draw_key: str, payload: dict, output_directory: str):
     key = _resource_key(draw_key)
     _line(lines, f"[ResourceBoneStatic_{key}]")
     _line(lines, "type = StructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(payload.get('static', ''))}")
+    _line(lines, f"filename = {_ini_filename(payload.get('static', ''), output_directory)}")
     _line(lines)
     _line(lines, f"[ResourceBoneAnim_{key}]")
     _line(lines, "type = StructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(payload.get('anim', ''))}")
+    _line(lines, f"filename = {_ini_filename(payload.get('anim', ''), output_directory)}")
     _line(lines)
     _line(lines, f"[ResourceBoneBind_{key}]")
     _line(lines, "type = StructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(payload.get('bind', ''))}")
+    _line(lines, f"filename = {_ini_filename(payload.get('bind', ''), output_directory)}")
     _line(lines)
     palette_rows = max(int(payload.get("palette_row_count", 0) or 0), 3)
     _line(lines, f"[ResourceBonePalette_{key}_UAV]")
@@ -102,24 +122,24 @@ def _append_bone_resources(lines: list[str], draw_key: str, payload: dict):
     _line(lines)
 
 
-def _append_morph_resources(lines: list[str], draw_key: str, payload: dict):
+def _append_morph_resources(lines: list[str], draw_key: str, payload: dict, output_directory: str):
     key = _resource_key(draw_key)
     base_resource = payload.get("base_position_resource_name", "") or f"ResourceBasePosition_{key}"
     if payload.get("base_position_path"):
         _line(lines, f"[{base_resource}]")
         _line(lines, "type = StructuredBuffer")
         _line(lines, f"stride = {int(payload.get('base_position_stride', 16) or 16)}")
-        _line(lines, f"filename = {payload.get('base_position_path')}")
+        _line(lines, f"filename = {_ini_filename(payload.get('base_position_path', ''), output_directory)}")
         _line(lines)
     _line(lines, f"[ResourceMorphStatic_{key}]")
     _line(lines, "type = StructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(payload.get('static', ''))}")
+    _line(lines, f"filename = {_ini_filename(payload.get('static', ''), output_directory)}")
     _line(lines)
     _line(lines, f"[ResourceMorphAnim_{key}]")
     _line(lines, "type = StructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, f"filename = {_basename(payload.get('anim', ''))}")
+    _line(lines, f"filename = {_ini_filename(payload.get('anim', ''), output_directory)}")
     _line(lines)
     vertex_count = int(payload.get("vertex_count", 0) or 0)
     stride = int(payload.get("base_position_stride", 16) or 16)
@@ -135,18 +155,61 @@ def _append_morph_resources(lines: list[str], draw_key: str, payload: dict):
     _line(lines)
 
 
-def _append_resources(lines: list[str], manifest: dict):
+def _append_geometry_resources(lines: list[str], draw_key: str, records: list[dict], output_directory: str):
+    for record in records:
+        suffix = _geometry_resource_suffix(record)
+        if not suffix:
+            suffix = _resource_key(draw_key)
+        index_buffer = dict(record.get("index_buffer", {}) or {})
+        index_path = index_buffer.get("file_path", "") or index_buffer.get("filename", "") or index_buffer.get("file_name", "")
+        _line(lines, f"[ResourceGeometryIndex_{suffix}]")
+        _line(lines, "type = Buffer")
+        _line(lines, "format = R32_UINT")
+        _line(lines, f"filename = {_ini_filename(index_path, output_directory)}")
+        _line(lines)
+
+        vertex_buffers = dict(record.get("vertex_buffers", {}) or {})
+        for slot_name, vertex_buffer in sorted(vertex_buffers.items(), key=lambda item: item[0]):
+            slot = str(slot_name or "").lower()
+            buffer_payload = dict(vertex_buffer or {})
+            stride = int(buffer_payload.get("stride", 0) or 0)
+            buffer_path = (
+                buffer_payload.get("file_path", "")
+                or buffer_payload.get("filename", "")
+                or buffer_payload.get("file_name", "")
+            )
+            resource_name = f"ResourceGeometry_{suffix}_{slot}"
+            _line(lines, f"[{resource_name}]")
+            _line(lines, "type = Buffer")
+            _line(lines, f"stride = {stride}")
+            _line(lines, f"filename = {_ini_filename(buffer_path, output_directory)}")
+            _line(lines)
+            if slot == "vb0":
+                _line(lines, f"[{resource_name}_SRV]")
+                _line(lines, "type = StructuredBuffer")
+                _line(lines, f"stride = {stride}")
+                _line(lines, f"filename = {_ini_filename(buffer_path, output_directory)}")
+                _line(lines)
+
+
+def _append_resources(lines: list[str], manifest: dict, output_directory: str):
     for draw_key, payload in manifest.get("payloads", {}).items():
+        if "geometry" in payload:
+            _append_geometry_resources(lines, draw_key, list(payload["geometry"]), output_directory)
         if "bone" in payload:
-            _append_bone_resources(lines, draw_key, payload["bone"])
+            _append_bone_resources(lines, draw_key, payload["bone"], output_directory)
         if "morph" in payload:
-            _append_morph_resources(lines, draw_key, payload["morph"])
+            _append_morph_resources(lines, draw_key, payload["morph"], output_directory)
 
 
 def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, payload: dict):
     key = _resource_key(draw_key)
     bone_payload = payload.get("bone")
     morph_payload = payload.get("morph")
+    geometry_records = list(payload.get("geometry", []) or [])
+    geometry_record = geometry_records[0] if geometry_records else None
+    geometry_suffix = _geometry_resource_suffix(geometry_record or {}) if geometry_record is not None else ""
+    geometry_vertex_buffers = dict((geometry_record or {}).get("vertex_buffers", {}) or {})
     match_priority = int(draw_part.get("match_priority", 50) or 50)
     _line(lines, f"[TextureOverride_RX_{key}]")
     _line(lines, "; RX manifest-driven animation entry")
@@ -157,9 +220,15 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, f"match_first_index = {first_index}")
     _line(lines, f"match_priority = {match_priority}")
     _line(lines, "if $rx_anim_enable == 1")
+    if geometry_record is not None:
+        _line(lines, "    handling = skip")
     if morph_payload is not None:
         shader = "CustomShader_ApplyMorph_PNTA40" if str(morph_payload.get("base_position_layout", "")).endswith("PNTA40") else "CustomShader_ApplyMorph"
-        base_resource = morph_payload.get("base_position_resource_name", "") or f"ResourceBasePosition_{key}"
+        base_resource = (
+            f"ResourceGeometry_{geometry_suffix}_vb0_SRV"
+            if geometry_record is not None and geometry_vertex_buffers.get("vb0")
+            else (morph_payload.get("base_position_resource_name", "") or f"ResourceBasePosition_{key}")
+        )
         _line(lines, f"    cs-t0 = {base_resource}")
         _line(lines, f"    cs-t1 = ResourceMorphStatic_{key}")
         _line(lines, f"    cs-t2 = ResourceMorphAnim_{key}")
@@ -167,8 +236,6 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, f"    dispatch = {(int(morph_payload.get('vertex_count', 0) or 0) + 63) // 64}, 1, 1")
         _line(lines, f"    run = {shader}")
         _line(lines, f"    ResourceMorphRuntimeVB_{key} = copy ResourceMorphRuntimeVB_{key}_UAV")
-        _line(lines, f"    vb0 = ref ResourceMorphRuntimeVB_{key}")
-        _line(lines, f"    vb3 = ref ResourceMorphRuntimeVB_{key}")
     if bone_payload is not None:
         bone_count = max(len(bone_payload.get("slot_ids", [])), 1)
         _line(lines, f"    cs-t0 = ResourceBoneAnim_{key}")
@@ -183,17 +250,36 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, f"    ResourceFakeCB1_{key} = copy ResourceFakeCB1_{key}_UAV")
         _line(lines, f"    vs-t0 = ResourceBonePalette_{key}")
         _line(lines, f"    vs-cb1 = ResourceFakeCB1_{key}")
+    if geometry_record is not None:
+        _line(lines, f"    ib = ResourceGeometryIndex_{geometry_suffix}")
+        for slot_name, _vertex_buffer in sorted(geometry_vertex_buffers.items(), key=lambda item: item[0]):
+            slot = str(slot_name or "").lower()
+            if slot == "vb0" and morph_payload is not None:
+                _line(lines, f"    vb0 = ref ResourceMorphRuntimeVB_{key}")
+            else:
+                _line(lines, f"    {slot} = ResourceGeometry_{geometry_suffix}_{slot}")
+        if "vb0" in geometry_vertex_buffers and "vb3" not in geometry_vertex_buffers:
+            if morph_payload is not None:
+                _line(lines, f"    vb3 = ref ResourceMorphRuntimeVB_{key}")
+            else:
+                _line(lines, f"    vb3 = ResourceGeometry_{geometry_suffix}_vb0")
+        index_buffer = dict(geometry_record.get("index_buffer", {}) or {})
+        index_count = int(index_buffer.get("index_count", geometry_record.get("index_count", 0)) or 0)
+        _line(lines, f"    drawindexed = {index_count}, 0, 0")
+    elif morph_payload is not None:
+        _line(lines, f"    vb0 = ref ResourceMorphRuntimeVB_{key}")
+        _line(lines, f"    vb3 = ref ResourceMorphRuntimeVB_{key}")
     _line(lines, "endif")
     _line(lines)
 
 
-def build_runtime_ini(manifest: dict, clip_name: str) -> str:
+def build_runtime_ini(manifest: dict, clip_name: str, output_directory: str = "") -> str:
     lines: list[str] = []
     _line(lines, "; Auto-generated by bone_importer RX runtime manifest renderer.")
     _line(lines, "; Do not edit generated resource names by hand; update rx_export_manifest.json instead.")
     _line(lines)
-    _append_global_resources(lines, manifest, clip_name)
-    _append_resources(lines, manifest)
+    _append_global_resources(lines, manifest, clip_name, output_directory)
+    _append_resources(lines, manifest, output_directory)
     for draw_key, draw_part in manifest.get("draw_parts", {}).items():
         payload = manifest.get("payloads", {}).get(draw_key, {})
         if not payload:
@@ -207,7 +293,7 @@ def write_runtime_ini_from_manifest(output_directory: str, clip_name: str) -> st
     output_path = resolve_runtime_ini_path(output_directory, clip_name)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as ini_file:
-        ini_file.write(build_runtime_ini(manifest, clip_name))
+        ini_file.write(build_runtime_ini(manifest, clip_name, output_directory))
     write_runtime_hlsl_files(output_directory)
     return output_path
 

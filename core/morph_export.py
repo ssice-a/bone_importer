@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import math
 import os
 import re
+import shutil
 import struct
 
 import bpy
@@ -614,6 +615,31 @@ def resolve_base_position_resource(output_directory: str, mesh_key: str):
     )
 
 
+def _materialize_base_position_buffer(output_directory: str, mesh_key: str, base_position_resource: dict) -> dict:
+    """Copy an external base Position buffer into the export directory for portable INI filenames."""
+    source_path = os.path.abspath(str(base_position_resource.get("buffer_path", "") or ""))
+    if not source_path or not os.path.exists(source_path):
+        return base_position_resource
+    export_root = os.path.abspath(bpy.path.abspath(output_directory or "//"))
+    try:
+        relative_path = os.path.relpath(source_path, export_root)
+    except ValueError:
+        relative_path = ".."
+    if relative_path and not relative_path.startswith(".."):
+        return base_position_resource
+
+    buffer_dir = os.path.join(export_root, "Buffer")
+    os.makedirs(buffer_dir, exist_ok=True)
+    safe_mesh_key = sanitize_export_name(mesh_key, "morph_mesh")
+    target_path = os.path.join(buffer_dir, f"{safe_mesh_key}_BasePosition.buf")
+    if os.path.abspath(target_path) != source_path:
+        shutil.copyfile(source_path, target_path)
+    materialized_resource = dict(base_position_resource)
+    materialized_resource["source_buffer_path"] = source_path
+    materialized_resource["buffer_path"] = target_path
+    return materialized_resource
+
+
 def _read_base_position_rows(buffer_path: str, stride: int):
     """Read one TheHerta-exported base position buffer through the NumPy path."""
     with open(buffer_path, "rb") as buffer_file:
@@ -1027,6 +1053,11 @@ def export_morph_mesh_for_proxy_armature(
                 }
             else:
                 base_position_resource = resolve_base_position_resource(output_directory, mesh_key)
+            base_position_resource = _materialize_base_position_buffer(
+                output_directory,
+                mesh_key,
+                base_position_resource,
+            )
             resolved_base_stride = int(base_position_resource["stride"])
             if resolved_base_stride <= 0:
                 base_buffer_size = os.path.getsize(base_position_resource["buffer_path"])
@@ -1046,6 +1077,8 @@ def export_morph_mesh_for_proxy_armature(
                 base_position_resource["buffer_path"],
                 resolved_base_stride,
             )
+            if len(base_rows) != len(representative_loop_indices) and len(base_rows) == source_loop_count:
+                representative_loop_indices = tuple(range(source_loop_count))
             resolved_include_tangents = bool(
                 include_normals
                 and

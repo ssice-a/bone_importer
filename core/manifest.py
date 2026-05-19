@@ -6,7 +6,7 @@ import json
 import os
 
 from .animation_export import normalize_clip_name
-from .draw_part import draw_part_manifest_rows
+from .draw_part import build_draw_key, draw_part_manifest_rows
 
 
 MANIFEST_FILE_NAME = "rx_export_manifest.json"
@@ -25,6 +25,7 @@ def load_export_manifest(output_directory: str) -> dict:
             "draw_parts": {},
             "bone_exports": {},
             "morph_exports": {},
+            "geometry_exports": {},
             "payloads": {},
         }
     with open(manifest_path, "r", encoding="utf-8") as manifest_file:
@@ -34,6 +35,7 @@ def load_export_manifest(output_directory: str) -> dict:
     payload.setdefault("draw_parts", {})
     payload.setdefault("bone_exports", {})
     payload.setdefault("morph_exports", {})
+    payload.setdefault("geometry_exports", {})
     payload.setdefault("payloads", {})
     return payload
 
@@ -77,6 +79,7 @@ def write_export_manifest(
     draw_parts=(),
     export_results=(),
     morph_results=(),
+    geometry_results=(),
     clip_metadata=None,
 ) -> str:
     """Merge the current export pass into the persistent RX manifest."""
@@ -130,6 +133,38 @@ def write_export_manifest(
         }
         manifest["morph_exports"][draw_key] = morph_payload
         manifest["payloads"].setdefault(draw_key, {})["morph"] = morph_payload
+
+    for geometry_result in geometry_results:
+        draw_key = build_draw_key(
+            geometry_result.get("ib_hash", ""),
+            int(geometry_result.get("match_index_count", 0) or 0),
+            int(geometry_result.get("match_first_index", 0) or 0),
+        )
+        if not draw_key:
+            continue
+        part_name = str(geometry_result.get("part_name", "part00") or "part00")
+        geometry_payload = {
+            "format": "bmc_geometry_v1",
+            "draw_key": draw_key,
+            "part_name": part_name,
+            "resource_suffix": geometry_result.get("resource_suffix", f"{draw_key}_{part_name}"),
+            "object_names": list(geometry_result.get("object_names", [])),
+            "object_draws": list(geometry_result.get("object_draws", [])),
+            "hash": str(geometry_result.get("ib_hash", "") or ""),
+            "match_index_count": int(geometry_result.get("match_index_count", 0) or 0),
+            "first_index": int(geometry_result.get("match_first_index", 0) or 0),
+            "index_buffer": dict(geometry_result.get("index_buffer", {}) or {}),
+            "vertex_buffers": dict(geometry_result.get("vertex_buffers", {}) or {}),
+        }
+        geometry_bucket = manifest["geometry_exports"].setdefault(draw_key, [])
+        geometry_bucket = [
+            existing
+            for existing in geometry_bucket
+            if str(existing.get("part_name", "")) != part_name
+        ]
+        geometry_bucket.append(geometry_payload)
+        manifest["geometry_exports"][draw_key] = geometry_bucket
+        manifest["payloads"].setdefault(draw_key, {})["geometry"] = geometry_bucket
 
     if primary_metadata is not None:
         _merge_clip(manifest, normalized_clip_name, clip_id, primary_metadata)

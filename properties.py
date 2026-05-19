@@ -224,6 +224,7 @@ def register_addon_properties():
         items=[
             ("TARGET_NUMERIC_GROUPS", "Target Numeric Groups", "Target DrawPart numeric vertex groups define the runtime slot order"),
             ("SOURCE_ARMATURE_SLOTS", "Source Armature Slots", "Source armature proxy slot metadata defines the runtime slot order"),
+            ("EXPLICIT_SLOT_MAP", "Explicit Slot Map", "Bone Slot Map JSON defines the runtime slot order"),
         ],
         default="TARGET_NUMERIC_GROUPS",
         description="Defines which slot namespace is the runtime truth for this DrawPart.",

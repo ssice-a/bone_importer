@@ -77,6 +77,30 @@ def _slot_ids_from_pose_bones(armature, draw_part=None) -> tuple[int, ...]:
     return tuple(sorted(slot_ids))
 
 
+def _slot_ids_from_explicit_slot_map_payload(draw_part) -> tuple[int, ...]:
+    raw_json = str(getattr(draw_part, "bone_slot_map_json", "") or "").strip()
+    if not raw_json:
+        return ()
+    try:
+        payload = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid Bone Slot Map JSON for {draw_part.draw_key}: {exc}") from exc
+    if isinstance(payload, dict):
+        payload = payload.get("bindings", [])
+    if not isinstance(payload, list):
+        raise ValueError(f"Bone Slot Map for {draw_part.draw_key} must be a JSON list or an object with bindings")
+
+    slot_ids = []
+    for row in payload:
+        if not isinstance(row, dict):
+            raise ValueError(f"Bone Slot Map row for {draw_part.draw_key} must be an object")
+        slot_id = int(row.get("slot_id", row.get("slot", -1)))
+        if slot_id < 0:
+            raise ValueError(f"Bone Slot Map row for {draw_part.draw_key} is missing slot_id")
+        slot_ids.append(slot_id)
+    return tuple(sorted(set(slot_ids)))
+
+
 def _split_slot_name(name: str) -> tuple[int, str]:
     match = SLOT_NAME_RE.match(str(name or ""))
     if match is None:
@@ -86,6 +110,14 @@ def _split_slot_name(name: str) -> tuple[int, str]:
 
 def resolve_slot_contract(draw_part) -> SlotContract:
     """Resolve the final slot order for a DrawPart."""
+    explicit_slot_ids = _slot_ids_from_explicit_slot_map_payload(draw_part)
+    if explicit_slot_ids:
+        return SlotContract(
+            draw_key=str(draw_part.draw_key),
+            slot_ids=explicit_slot_ids,
+            source="explicit_slot_map",
+        )
+
     skin_contract = str(getattr(draw_part, "skin_contract", "TARGET_NUMERIC_GROUPS") or "TARGET_NUMERIC_GROUPS")
     if skin_contract == "SOURCE_ARMATURE_SLOTS":
         slot_ids = _slot_ids_from_pose_bones(getattr(draw_part, "bone_source_armature", None), draw_part)
