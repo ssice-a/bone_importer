@@ -111,6 +111,16 @@ def _source_armature_for_mesh(mesh_obj):
     return None
 
 
+def _remove_unmapped_vertex_groups(mesh_obj, keep_group_indices: set[int]) -> int:
+    removed_count = 0
+    for group_index in range(len(mesh_obj.vertex_groups) - 1, -1, -1):
+        if group_index in keep_group_indices:
+            continue
+        mesh_obj.vertex_groups.remove(mesh_obj.vertex_groups[group_index])
+        removed_count += 1
+    return removed_count
+
+
 def _build_numeric_export_duplicate(source_mesh, target_name: str, collection):
     source_armature = _source_armature_for_mesh(source_mesh)
     if source_armature is None:
@@ -141,14 +151,17 @@ def _build_numeric_export_duplicate(source_mesh, target_name: str, collection):
             modifier.show_viewport = False
             modifier.show_render = False
 
+    kept_group_indices = {group_index for group_index, _group_name in mapped_groups}
+    removed_group_count = _remove_unmapped_vertex_groups(duplicate, kept_group_indices)
+
     collection.objects.link(duplicate)
-    for slot_id, (group_index, _group_name) in enumerate(mapped_groups):
-        duplicate.vertex_groups[group_index].name = f"__rx_slot_tmp_{slot_id}"
-    for group_index, vertex_group in enumerate(duplicate.vertex_groups):
-        if not vertex_group.name.startswith("__rx_slot_tmp_"):
-            vertex_group.name = f"__rx_unused_{group_index}"
-    for slot_id, (group_index, _group_name) in enumerate(mapped_groups):
-        duplicate.vertex_groups[group_index].name = str(slot_id)
+    if len(duplicate.vertex_groups) != len(mapped_groups):
+        raise RuntimeError(
+            f"{duplicate.name}: mapped vertex group cleanup mismatch "
+            f"({len(duplicate.vertex_groups)} groups != {len(mapped_groups)} mappings)"
+        )
+    for slot_id, vertex_group in enumerate(duplicate.vertex_groups):
+        vertex_group.name = str(slot_id)
 
     slot_bindings = [
         {
@@ -164,6 +177,7 @@ def _build_numeric_export_duplicate(source_mesh, target_name: str, collection):
         "source_armature": source_armature,
         "slot_bindings": slot_bindings,
         "missing_bones": missing_bones,
+        "removed_group_count": removed_group_count,
     }
 
 
@@ -268,6 +282,7 @@ def _configure_runtime_draw_parts(geometry_export):
             "index_count": int(geometry_record.get("index_buffer", {}).get("index_count", 0) or 0),
             "vb_slots": sorted(geometry_record.get("vertex_buffers", {}).keys()),
             "missing_weighted_bones": list(build["missing_bones"]),
+            "removed_vertex_groups": int(build["removed_group_count"]),
         }
     return configured
 
