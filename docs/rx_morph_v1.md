@@ -222,7 +222,7 @@ Current and planned NumPy candidates:
 
 ## Export Performance Diagnostics
 
-`scripts/export_rx_test.py` writes `rx_export_perf.json` into the export directory. This report is the first place to check before optimizing because it separates setup, geometry export, bone export, morph export, and the internal bone sampling stages.
+`scripts/export_rx_test.py` prints a console performance report between `RX_EXPORT_PERFORMANCE_BEGIN` and `RX_EXPORT_PERFORMANCE_END`. This report is the first place to check before optimizing because it separates setup, geometry export, bone export, morph export, and the internal bone sampling stages. It is intentionally not written as an output JSON artifact.
 
 The current bone payload exporter records:
 

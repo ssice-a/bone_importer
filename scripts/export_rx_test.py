@@ -60,6 +60,103 @@ def _write_json(path: str, payload: dict):
         json_file.write("\n")
 
 
+def _seconds(value) -> str:
+    return f"{float(value or 0.0):.3f}s"
+
+
+def _print_named_timings(title: str, timings: dict, names: tuple[str, ...]):
+    print(title)
+    for name in names:
+        if name in timings:
+            print(f"  {name}: {_seconds(timings.get(name))}")
+
+
+def _print_export_performance(perf_report: dict):
+    timings = dict(perf_report.get("timings_seconds", {}) or {})
+    bone_perf = dict(perf_report.get("bone_performance", {}) or {})
+    bone_timings = dict(bone_perf.get("timings_seconds", {}) or {})
+    morph_perf = dict(perf_report.get("morph_performance", {}) or {})
+
+    print("RX_EXPORT_PERFORMANCE_BEGIN")
+    print(
+        "Summary: "
+        f"output={perf_report.get('output_dir', '')} "
+        f"frames={perf_report.get('frame_start')}..{perf_report.get('frame_end')} "
+        f"step={perf_report.get('frame_step')} "
+        f"samples={perf_report.get('sample_count')} "
+        f"failed={len(perf_report.get('failed', []) or [])}"
+    )
+    print(
+        "Counts: "
+        f"runtime_targets={perf_report.get('runtime_targets')} "
+        f"draw_parts={perf_report.get('draw_parts')} "
+        f"geometry_records={perf_report.get('geometry_records')} "
+        f"bone_parts={perf_report.get('exported_bone_parts')} "
+        f"bones={perf_report.get('total_exported_bones')} "
+        f"morph_meshes={perf_report.get('exported_morph_meshes')} "
+        f"morph_channels={perf_report.get('total_morph_channels')}"
+    )
+    _print_named_timings(
+        "Stages:",
+        timings,
+        (
+            "setup_seconds",
+            "collect_runtime_targets_seconds",
+            "geometry_export_seconds",
+            "configure_draw_parts_seconds",
+            "build_draw_parts_seconds",
+            "seed_manifest_seconds",
+            "bone_export_seconds",
+            "morph_export_seconds",
+            "total_seconds",
+        ),
+    )
+    _print_named_timings(
+        "Bone:",
+        bone_timings,
+        (
+            "prepare_payloads_seconds",
+            "build_sample_groups_seconds",
+            "sample_total_seconds",
+            "restore_frame_seconds",
+            "write_payloads_seconds",
+            "shared_clip_seconds",
+            "total_seconds",
+        ),
+    )
+    print(
+        "Morph: "
+        f"elapsed={_seconds(morph_perf.get('elapsed_seconds'))} "
+        f"samples={morph_perf.get('sampled_frames')} "
+        f"meshes={morph_perf.get('exported_morph_meshes')} "
+        f"channels={morph_perf.get('total_morph_channels')}"
+    )
+    if bone_perf.get("sample_cache_enabled"):
+        print(f"Bone cache: enabled dir={bone_perf.get('sample_cache_dir', '')}")
+    else:
+        print("Bone cache: disabled")
+    for group in bone_perf.get("sample_groups", []) or []:
+        cache_state = "hit" if group.get("cache_hit") else "miss"
+        if not group.get("cache_enabled"):
+            cache_state = "off"
+        print(
+            "Bone sample group: "
+            f"name={group.get('sample_group')} "
+            f"cache={cache_state} "
+            f"mode={group.get('cache_fingerprint_mode', 'off')} "
+            f"samples={group.get('sample_count')} "
+            f"bones={group.get('unique_bones')} "
+            f"pairs={group.get('sample_bone_pairs')} "
+            f"frame_set={_seconds(group.get('frame_set_seconds'))} "
+            f"pose={_seconds(group.get('pose_sample_seconds'))} "
+            f"cache_key={_seconds(group.get('cache_key_seconds'))} "
+            f"cache_load={_seconds(group.get('cache_load_seconds'))} "
+            f"cache_write={_seconds(group.get('cache_write_seconds'))} "
+            f"total={_seconds(group.get('total_seconds'))}"
+        )
+    print("RX_EXPORT_PERFORMANCE_END")
+
+
 def _register_addon():
     if REPO_PARENT not in sys.path:
         sys.path.insert(0, REPO_PARENT)
@@ -340,7 +437,6 @@ def main():
     total_elapsed = time.perf_counter() - total_start
     timings["total_seconds"] = total_elapsed
     failed = [*list(bone_result.failed_armatures), *list(morph_result.failed_armatures)]
-    perf_report_path = os.path.join(OUTPUT_DIR, "rx_export_perf.json")
     perf_report = {
         "format": "rx_export_perf_v1",
         "output_dir": OUTPUT_DIR,
@@ -367,12 +463,12 @@ def main():
             "total_morph_channels": int(morph_result.total_morph_channels),
         },
     }
-    _write_json(perf_report_path, perf_report)
+    _print_export_performance(perf_report)
     payload = {
         "ok": not failed,
         "configured": configured,
         "elapsed_wall": total_elapsed,
-        "perf_report": perf_report_path,
+        "perf_report": "console",
         "geometry_manifest": geometry_export["result"]["manifest_path"],
         "geometry_records": len(geometry_export["geometry_records"]),
         "runtime_targets": len(runtime_targets),
