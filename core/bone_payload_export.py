@@ -134,6 +134,60 @@ def _write_bone_bind_buffer(path: str, binding_pose_bones):
         flat_values.tofile(bind_file)
 
 
+def _build_bone_payload_metadata(
+    draw_part,
+    bindings,
+    slot_ids,
+    exported_frames,
+    frame_step,
+    fps,
+    clip_name,
+    clip_id,
+    bone_static_path,
+    bone_anim_path,
+    bone_bind_path,
+    correction_mode,
+):
+    return {
+        "format": "rx_bone_payload_v1",
+        "clip_name": normalize_clip_name(clip_name),
+        "clip_id": int(clip_id),
+        "draw_key": draw_part.draw_key,
+        "draw_object_name": draw_part.source_object.name,
+        "hash": draw_part.hash,
+        "match_index_count": int(draw_part.match_index_count),
+        "first_index": int(draw_part.first_index),
+        "match_priority": int(draw_part.match_priority),
+        "skin_contract": draw_part.skin_contract,
+        "source_armatures": sorted({binding.source_armature.name for binding in bindings}),
+        "bone_count": len(bindings),
+        "slot_ids": list(slot_ids),
+        "slot_bindings": serialize_slot_bindings(tuple(bindings)),
+        "frame_start": exported_frames[0],
+        "frame_end": exported_frames[-1],
+        "frame_step": int(frame_step),
+        "frame_count": len(exported_frames),
+        "frame_numbers": list(exported_frames),
+        "fps": float(fps),
+        "clip_fps": max(int(round(float(fps))), 1),
+        "default_ticks_per_sample": 1,
+        "default_presents_per_step": 1,
+        "default_loop_start_sample": 0,
+        "default_loop_end_sample": max(len(exported_frames) - 1, 0),
+        "rows_per_bone": 2,
+        "storage_layout": "[sample][bone][row]",
+        "bone_static_path": bone_static_path,
+        "bone_anim_path": bone_anim_path,
+        "bone_bind_path": bone_bind_path,
+        "tqs_path": bone_anim_path,
+        "bind_path": bone_bind_path,
+        "static_clip_path": bone_static_path,
+        "buffer_correction_mode": correction_mode,
+        "coordinate_space": "blender_armature_space",
+        "coordinate_correction_runtime": "baked_in_export_tq",
+    }
+
+
 def write_shared_clip_buffers(output_directory, clip_name, clip_id, exported_frames, fps, ticks_per_sample=1, write_metadata=True):
     """Write Clip-level timeline/master playback buffers."""
     normalized_clip_name = normalize_clip_name(clip_name)
@@ -229,44 +283,20 @@ def export_bone_payload_for_draw_part(
     _write_bone_bind_buffer(bone_bind_path, binding_pose_bones)
     write_uint4_buffer_rows(bone_static_path, build_bone_static_uint4_rows(slot_ids, len(exported_frames)))
 
-    metadata = {
-        "format": "rx_bone_payload_v1",
-        "clip_name": normalize_clip_name(clip_name),
-        "clip_id": int(clip_id),
-        "draw_key": draw_part.draw_key,
-        "draw_object_name": draw_part.source_object.name,
-        "hash": draw_part.hash,
-        "match_index_count": int(draw_part.match_index_count),
-        "first_index": int(draw_part.first_index),
-        "match_priority": int(draw_part.match_priority),
-        "skin_contract": draw_part.skin_contract,
-        "source_armatures": sorted({binding.source_armature.name for binding in bindings}),
-        "bone_count": len(bindings),
-        "slot_ids": list(slot_ids),
-        "slot_bindings": serialize_slot_bindings(tuple(binding for binding, _pose_bone in binding_pose_bones)),
-        "frame_start": exported_frames[0],
-        "frame_end": exported_frames[-1],
-        "frame_step": int(frame_step),
-        "frame_count": len(exported_frames),
-        "frame_numbers": list(exported_frames),
-        "fps": float(fps),
-        "clip_fps": max(int(round(float(fps))), 1),
-        "default_ticks_per_sample": 1,
-        "default_presents_per_step": 1,
-        "default_loop_start_sample": 0,
-        "default_loop_end_sample": max(len(exported_frames) - 1, 0),
-        "rows_per_bone": 2,
-        "storage_layout": "[sample][bone][row]",
-        "bone_static_path": bone_static_path,
-        "bone_anim_path": bone_anim_path,
-        "bone_bind_path": bone_bind_path,
-        "tqs_path": bone_anim_path,
-        "bind_path": bone_bind_path,
-        "static_clip_path": bone_static_path,
-        "buffer_correction_mode": correction_mode,
-        "coordinate_space": "blender_armature_space",
-        "coordinate_correction_runtime": "baked_in_export_tq",
-    }
+    metadata = _build_bone_payload_metadata(
+        draw_part,
+        tuple(binding for binding, _pose_bone in binding_pose_bones),
+        slot_ids,
+        exported_frames,
+        frame_step,
+        fps,
+        clip_name,
+        clip_id,
+        bone_static_path,
+        bone_anim_path,
+        bone_bind_path,
+        correction_mode,
+    )
     if write_metadata:
         write_json_file(bone_metadata_path, metadata)
     else:
@@ -282,6 +312,39 @@ def export_bone_payload_for_draw_part(
         metadata=metadata,
         debug_metadata_path=bone_metadata_path,
     )
+
+
+def _binding_sample_key(binding):
+    return (id(binding.source_armature), binding.source_armature.name, binding.source_bone)
+
+
+def _sample_pose_tq_group(context, exported_frames, sample_entries, correction_matrix):
+    samples = np.empty((len(exported_frames), len(sample_entries), TQ_FLOATS_PER_BONE), dtype="<f4")
+    scene = context.scene
+    for frame_index, frame_number in enumerate(exported_frames):
+        scene.frame_set(frame_number)
+        for bone_index, (_key, source_armature, source_bone) in enumerate(sample_entries):
+            pose_bone = source_armature.pose.bones.get(source_bone)
+            if pose_bone is None:
+                raise ValueError(f"Source bone vanished: {source_armature.name}/{source_bone}")
+            pose_matrix = _pose_matrix_for_export(pose_bone, correction_matrix)
+            translation, rotation, _scale = pose_matrix.decompose()
+            rotation.normalize()
+            samples[frame_index, bone_index, 0] = translation.x
+            samples[frame_index, bone_index, 1] = translation.y
+            samples[frame_index, bone_index, 2] = translation.z
+            samples[frame_index, bone_index, 3] = 1.0
+            samples[frame_index, bone_index, 4] = rotation.x
+            samples[frame_index, bone_index, 5] = rotation.y
+            samples[frame_index, bone_index, 6] = rotation.z
+            samples[frame_index, bone_index, 7] = rotation.w
+    return samples
+
+
+def _write_bone_anim_from_sample_cache(path: str, sample_cache, sample_indices):
+    selected_samples = np.asarray(sample_cache[:, list(sample_indices), :], dtype="<f4")
+    with open(path, "wb") as binary_file:
+        selected_samples.tofile(binary_file)
 
 
 def export_bone_payloads_for_draw_parts(
@@ -302,27 +365,146 @@ def export_bone_payloads_for_draw_parts(
     exported_frames = normalize_animation_frame_range(frame_start, frame_end, frame_step)
     results = []
     failures = []
+    prepared_payloads = []
     for draw_part in normalized_draw_parts:
         if not bool(getattr(draw_part, "bone_enabled", True)):
             continue
         try:
-            result = export_bone_payload_for_draw_part(
-                context=context,
-                draw_part=draw_part,
-                output_directory=output_directory,
-                clip_name=clip_name,
-                clip_id=clip_id,
-                frame_start=frame_start,
-                frame_end=frame_end,
-                frame_step=frame_step,
-                fps=fps,
-                write_metadata=write_metadata,
+            bindings = resolve_bone_slot_bindings(draw_part, require_complete=True)
+            if not bindings:
+                continue
+            (
+                _directory_path,
+                bone_static_path,
+                bone_anim_path,
+                bone_bind_path,
+                bone_metadata_path,
+            ) = resolve_bone_payload_paths(output_directory, draw_part.draw_key)
+            binding_pose_bones = tuple(_iter_binding_pose_bones(bindings))
+            slot_ids = tuple(binding.slot_id for binding, _pose_bone in binding_pose_bones)
+            correction_mode, correction_matrix = _binding_correction_matrix(draw_part)
+            prepared_payloads.append(
+                {
+                    "draw_part": draw_part,
+                    "bindings": tuple(bindings),
+                    "binding_pose_bones": binding_pose_bones,
+                    "slot_ids": slot_ids,
+                    "correction_mode": correction_mode,
+                    "correction_matrix": correction_matrix,
+                    "bone_static_path": bone_static_path,
+                    "bone_anim_path": bone_anim_path,
+                    "bone_bind_path": bone_bind_path,
+                    "bone_metadata_path": bone_metadata_path,
+                }
             )
         except Exception as exc:
             failures.append(f"{draw_part.draw_key}: {exc}")
             continue
-        if result is not None:
-            results.append(result)
+
+    sample_groups = {}
+    for payload in prepared_payloads:
+        group_key = str(payload["correction_mode"])
+        group = sample_groups.setdefault(
+            group_key,
+            {
+                "correction_matrix": payload["correction_matrix"],
+                "sample_entries_by_key": {},
+            },
+        )
+        for binding in payload["bindings"]:
+            sample_key = _binding_sample_key(binding)
+            group["sample_entries_by_key"][sample_key] = (
+                sample_key,
+                binding.source_armature,
+                binding.source_bone,
+            )
+
+    original_frame = context.scene.frame_current
+    sample_caches = {}
+    sample_failures = {}
+    try:
+        for group_key, group in sample_groups.items():
+            sample_entries = tuple(
+                group["sample_entries_by_key"][sample_key]
+                for sample_key in sorted(
+                    group["sample_entries_by_key"],
+                    key=lambda item: (item[1], item[2]),
+                )
+            )
+            try:
+                sample_caches[group_key] = {
+                    "index_by_key": {entry[0]: index for index, entry in enumerate(sample_entries)},
+                    "samples": _sample_pose_tq_group(
+                        context,
+                        exported_frames,
+                        sample_entries,
+                        group["correction_matrix"],
+                    ),
+                }
+            except Exception as exc:
+                sample_failures[group_key] = str(exc)
+    finally:
+        context.scene.frame_set(original_frame)
+
+    for payload in prepared_payloads:
+        draw_part = payload["draw_part"]
+        try:
+            group_key = str(payload["correction_mode"])
+            if group_key in sample_failures:
+                failures.append(f"{draw_part.draw_key}: {sample_failures[group_key]}")
+                continue
+            sample_cache = sample_caches[group_key]
+            sample_indices = tuple(
+                sample_cache["index_by_key"][_binding_sample_key(binding)]
+                for binding in payload["bindings"]
+            )
+            _write_bone_anim_from_sample_cache(
+                payload["bone_anim_path"],
+                sample_cache["samples"],
+                sample_indices,
+            )
+            _write_bone_bind_buffer(payload["bone_bind_path"], payload["binding_pose_bones"])
+            write_uint4_buffer_rows(
+                payload["bone_static_path"],
+                build_bone_static_uint4_rows(payload["slot_ids"], len(exported_frames)),
+            )
+            metadata = _build_bone_payload_metadata(
+                draw_part,
+                payload["bindings"],
+                payload["slot_ids"],
+                exported_frames,
+                frame_step,
+                fps,
+                clip_name,
+                clip_id,
+                payload["bone_static_path"],
+                payload["bone_anim_path"],
+                payload["bone_bind_path"],
+                payload["correction_mode"],
+            )
+            metadata["sampling_cache"] = {
+                "mode": "shared_pose_tq_by_correction_mode",
+                "sample_group": group_key,
+                "unique_group_bones": int(sample_cache["samples"].shape[1]),
+            }
+            if write_metadata:
+                write_json_file(payload["bone_metadata_path"], metadata)
+            else:
+                payload["bone_metadata_path"] = ""
+            results.append(
+                AnimationExportResult(
+                    armature_name=", ".join(metadata["source_armatures"]),
+                    tqs_path=payload["bone_anim_path"],
+                    bind_path=payload["bone_bind_path"],
+                    static_clip_path=payload["bone_static_path"],
+                    frame_count=len(exported_frames),
+                    bone_count=len(payload["bindings"]),
+                    metadata=metadata,
+                    debug_metadata_path=payload["bone_metadata_path"],
+                )
+            )
+        except Exception as exc:
+            failures.append(f"{draw_part.draw_key}: {exc}")
 
     timeline_static_path, master_playback_path, clip_metadata_path, clip_metadata = write_shared_clip_buffers(
         output_directory=output_directory,
