@@ -135,6 +135,17 @@ def _print_export_performance(perf_report: dict):
         print(f"Bone cache: enabled dir={bone_perf.get('sample_cache_dir', '')}")
     else:
         print("Bone cache: disabled")
+    sample_isolation = dict(bone_perf.get("sample_isolation", {}) or {})
+    print(
+        "Bone sampling isolation: "
+        f"enabled={bool(sample_isolation.get('enabled', False))} "
+        f"reason={sample_isolation.get('skip_reason', '')} "
+        f"min_samples={sample_isolation.get('min_sample_count', 0)} "
+        f"hidden_meshes={sample_isolation.get('hidden_mesh_count', 0)} "
+        f"required_objects={sample_isolation.get('required_object_count', 0)} "
+        f"setup={_seconds(sample_isolation.get('seconds'))} "
+        f"restore={_seconds(sample_isolation.get('restore_seconds'))}"
+    )
     for group in bone_perf.get("sample_groups", []) or []:
         cache_state = "hit" if group.get("cache_hit") else "miss"
         if not group.get("cache_enabled"):
@@ -369,6 +380,7 @@ def main():
             "RX_BONE_SAMPLE_CACHE_DIR",
             os.path.join(OUTPUT_DIR, ".rx_bone_sample_cache"),
         )
+    os.environ.setdefault("RX_BONE_SAMPLE_HIDE_MESHES", "1")
     stage_start = time.perf_counter()
     _reset_rx_manifest()
     _register_addon()

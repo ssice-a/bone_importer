@@ -229,6 +229,7 @@ The current bone payload exporter records:
 - `frame_set_seconds`: time spent advancing Blender's evaluated scene.
 - `pose_sample_seconds`: time spent reading/decomposing sampled pose matrices.
 - `write_payloads_seconds`: time spent writing per-DrawPart bone buffers.
+- `sample_isolation`: whether non-essential meshes were hidden during bone sampling.
 - `sample_groups`: cache hit/miss, sampled bone count, sample count, and optional `.npy` cache timings.
 
 For repeated local validation exports, enable the opt-in bone sample cache:
@@ -238,3 +239,5 @@ $env:RX_EXPORT_USE_BONE_CACHE='1'
 ```
 
 This creates `.rx_bone_sample_cache/*.npy` under the output directory unless `RX_BONE_SAMPLE_CACHE_DIR` is set. The cache is rebuildable exporter scratch data, not a runtime artifact. By default it uses a shallow fingerprint intended to keep cache lookup cheaper than Blender sampling; set `RX_BONE_SAMPLE_CACHE_DEEP=1` only when validating cache invalidation for complex constraint-target edits, because deep fingerprints can be slower than sampling.
+
+`RX_BONE_SAMPLE_HIDE_MESHES=1` temporarily hides non-essential mesh objects during bone sampling. The exporter keeps sampled armatures, their parents, and object targets referenced by armature constraints/drivers visible, then restores mesh visibility before morph export. The RX validation script enables this by default for clips with at least `RX_BONE_SAMPLE_HIDE_MESHES_MIN_SAMPLES` samples, default `16`, because it reduces Blender `frame_set` cost without changing exported buffers in the current test scene.

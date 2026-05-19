@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from array import array
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -365,6 +366,106 @@ def _env_flag(name: str) -> bool:
     return str(os.environ.get(name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    raw_value = str(os.environ.get(name, "") or "").strip()
+    if not raw_value:
+        return int(default)
+    try:
+        return int(raw_value)
+    except ValueError:
+        return int(default)
+
+
+def _iter_driver_target_objects(id_data):
+    animation_data = getattr(id_data, "animation_data", None)
+    for driver in getattr(animation_data, "drivers", ()) or ():
+        for variable in getattr(getattr(driver, "driver", None), "variables", ()) or ():
+            for target in getattr(variable, "targets", ()) or ():
+                target_id = getattr(target, "id", None)
+                if isinstance(target_id, bpy.types.Object):
+                    yield target_id
+
+
+def _iter_constraint_target_objects(owner):
+    for constraint in getattr(owner, "constraints", ()) or ():
+        target = getattr(constraint, "target", None)
+        if isinstance(target, bpy.types.Object):
+            yield target
+
+
+def _collect_bone_sampling_required_objects(sample_groups):
+    required = set()
+    source_armatures = {}
+    for group in sample_groups.values():
+        for _sample_key, source_armature, _source_bone in group["sample_entries_by_key"].values():
+            source_armatures[source_armature.name] = source_armature
+    for source_armature in source_armatures.values():
+        obj = source_armature
+        while obj is not None:
+            required.add(obj)
+            obj = getattr(obj, "parent", None)
+        for target in _iter_constraint_target_objects(source_armature):
+            required.add(target)
+        for target in _iter_driver_target_objects(source_armature):
+            required.add(target)
+        for target in _iter_driver_target_objects(getattr(source_armature, "data", None)):
+            required.add(target)
+        for pose_bone in getattr(source_armature.pose, "bones", ()) or ():
+            for target in _iter_constraint_target_objects(pose_bone):
+                required.add(target)
+            for target in _iter_driver_target_objects(pose_bone):
+                required.add(target)
+    return required
+
+
+@contextmanager
+def _temporary_mesh_sampling_isolation(context, sample_groups, sample_count):
+    """Hide non-essential meshes while sampling bones so frame_set does less depsgraph work."""
+    min_sample_count = max(_env_int("RX_BONE_SAMPLE_HIDE_MESHES_MIN_SAMPLES", 16), 1)
+    info = {
+        "enabled": False,
+        "sample_count": int(sample_count),
+        "min_sample_count": int(min_sample_count),
+        "hidden_mesh_count": 0,
+        "required_object_count": 0,
+        "seconds": 0.0,
+    }
+    if not _env_flag("RX_BONE_SAMPLE_HIDE_MESHES"):
+        info["skip_reason"] = "disabled"
+        yield info
+        return
+    if int(sample_count) < min_sample_count:
+        info["skip_reason"] = "sample_count_below_threshold"
+        yield info
+        return
+
+    start = perf_counter()
+    required_objects = _collect_bone_sampling_required_objects(sample_groups)
+    scene_objects = tuple(getattr(getattr(context, "scene", None), "objects", ()) or ())
+    changed = []
+    try:
+        for obj in scene_objects:
+            if getattr(obj, "type", "") != "MESH" or obj in required_objects:
+                continue
+            changed.append((obj, bool(getattr(obj, "hide_viewport", False))))
+            obj.hide_viewport = True
+        info.update(
+            {
+                "enabled": True,
+                "hidden_mesh_count": len(changed),
+                "required_object_count": len(required_objects),
+                "seconds": perf_counter() - start,
+                "skip_reason": "active",
+            }
+        )
+        yield info
+    finally:
+        restore_start = perf_counter()
+        for obj, previous_hide_viewport in changed:
+            obj.hide_viewport = previous_hide_viewport
+        info["restore_seconds"] = perf_counter() - restore_start
+
+
 def _constraint_payload(constraint, deep=False):
     target = getattr(constraint, "target", None)
     payload = {
@@ -604,95 +705,97 @@ def export_bone_payloads_for_draw_parts(
     sample_caches = {}
     sample_failures = {}
     sample_group_timings = []
+    sample_isolation = {}
     sample_total_start = perf_counter()
     sample_cache_dir = _resolve_sample_cache_dir(output_directory)
-    try:
-        for group_key, group in sample_groups.items():
-            sample_entries = tuple(
-                group["sample_entries_by_key"][sample_key]
-                for sample_key in sorted(
-                    group["sample_entries_by_key"],
-                    key=lambda item: (item[1], item[2]),
+    with _temporary_mesh_sampling_isolation(context, sample_groups, len(exported_frames)) as sample_isolation:
+        try:
+            for group_key, group in sample_groups.items():
+                sample_entries = tuple(
+                    group["sample_entries_by_key"][sample_key]
+                    for sample_key in sorted(
+                        group["sample_entries_by_key"],
+                        key=lambda item: (item[1], item[2]),
+                    )
                 )
-            )
-            try:
-                expected_shape = (len(exported_frames), len(sample_entries), TQ_FLOATS_PER_BONE)
-                cache_hash = ""
-                cache_payload = {"fingerprint_mode": "off"}
-                cache_key_seconds = 0.0
-                cache_load_seconds = 0.0
-                cache_path = ""
-                samples = None
-                if sample_cache_dir:
-                    cache_key_start = perf_counter()
-                    cache_hash, cache_payload = _build_sample_cache_key(
-                        context,
-                        exported_frames,
-                        sample_entries,
-                        group["correction_matrix"],
-                    )
-                    cache_key_seconds = perf_counter() - cache_key_start
-                    samples, cache_load_seconds = _load_sample_cache(
-                        sample_cache_dir,
-                        cache_hash,
-                        expected_shape,
-                    )
-                    cache_path = os.path.join(sample_cache_dir, f"{cache_hash}.npy")
-                if samples is None:
-                    samples, sample_timing = _sample_pose_tq_group(
-                        context,
-                        exported_frames,
-                        sample_entries,
-                        group["correction_matrix"],
-                    )
-                    cache_path, cache_write_seconds = _write_sample_cache(
-                        sample_cache_dir,
-                        cache_hash,
-                        cache_payload,
-                        samples,
-                    )
-                    sample_timing.update(
-                        {
-                            "cache_enabled": bool(sample_cache_dir),
-                            "cache_hit": False,
+                try:
+                    expected_shape = (len(exported_frames), len(sample_entries), TQ_FLOATS_PER_BONE)
+                    cache_hash = ""
+                    cache_payload = {"fingerprint_mode": "off"}
+                    cache_key_seconds = 0.0
+                    cache_load_seconds = 0.0
+                    cache_path = ""
+                    samples = None
+                    if sample_cache_dir:
+                        cache_key_start = perf_counter()
+                        cache_hash, cache_payload = _build_sample_cache_key(
+                            context,
+                            exported_frames,
+                            sample_entries,
+                            group["correction_matrix"],
+                        )
+                        cache_key_seconds = perf_counter() - cache_key_start
+                        samples, cache_load_seconds = _load_sample_cache(
+                            sample_cache_dir,
+                            cache_hash,
+                            expected_shape,
+                        )
+                        cache_path = os.path.join(sample_cache_dir, f"{cache_hash}.npy")
+                    if samples is None:
+                        samples, sample_timing = _sample_pose_tq_group(
+                            context,
+                            exported_frames,
+                            sample_entries,
+                            group["correction_matrix"],
+                        )
+                        cache_path, cache_write_seconds = _write_sample_cache(
+                            sample_cache_dir,
+                            cache_hash,
+                            cache_payload,
+                            samples,
+                        )
+                        sample_timing.update(
+                            {
+                                "cache_enabled": bool(sample_cache_dir),
+                                "cache_hit": False,
+                                "cache_hash": cache_hash,
+                                "cache_path": cache_path,
+                                "cache_key_seconds": cache_key_seconds,
+                                "cache_fingerprint_mode": cache_payload.get("fingerprint_mode", "shallow"),
+                                "cache_load_seconds": cache_load_seconds,
+                                "cache_write_seconds": cache_write_seconds,
+                            }
+                        )
+                    else:
+                        sample_timing = {
+                            "sample_count": len(exported_frames),
+                            "unique_bones": len(sample_entries),
+                            "frame_set_seconds": 0.0,
+                            "pose_sample_seconds": 0.0,
+                            "total_seconds": cache_load_seconds,
+                            "sample_bone_pairs": len(exported_frames) * len(sample_entries),
+                            "cache_enabled": True,
+                            "cache_hit": True,
                             "cache_hash": cache_hash,
                             "cache_path": cache_path,
                             "cache_key_seconds": cache_key_seconds,
                             "cache_fingerprint_mode": cache_payload.get("fingerprint_mode", "shallow"),
                             "cache_load_seconds": cache_load_seconds,
-                            "cache_write_seconds": cache_write_seconds,
+                            "cache_write_seconds": 0.0,
                         }
-                    )
-                else:
-                    sample_timing = {
-                        "sample_count": len(exported_frames),
-                        "unique_bones": len(sample_entries),
-                        "frame_set_seconds": 0.0,
-                        "pose_sample_seconds": 0.0,
-                        "total_seconds": cache_load_seconds,
-                        "sample_bone_pairs": len(exported_frames) * len(sample_entries),
-                        "cache_enabled": True,
-                        "cache_hit": True,
-                        "cache_hash": cache_hash,
-                        "cache_path": cache_path,
-                        "cache_key_seconds": cache_key_seconds,
-                        "cache_fingerprint_mode": cache_payload.get("fingerprint_mode", "shallow"),
-                        "cache_load_seconds": cache_load_seconds,
-                        "cache_write_seconds": 0.0,
+                    sample_caches[group_key] = {
+                        "index_by_key": {entry[0]: index for index, entry in enumerate(sample_entries)},
+                        "samples": samples,
+                        "timing": sample_timing,
                     }
-                sample_caches[group_key] = {
-                    "index_by_key": {entry[0]: index for index, entry in enumerate(sample_entries)},
-                    "samples": samples,
-                    "timing": sample_timing,
-                }
-                sample_group_timings.append({"sample_group": group_key, **sample_timing})
-            except Exception as exc:
-                sample_failures[group_key] = str(exc)
-    finally:
-        timings["sample_total_seconds"] = perf_counter() - sample_total_start
-        restore_start = perf_counter()
-        context.scene.frame_set(original_frame)
-        timings["restore_frame_seconds"] = perf_counter() - restore_start
+                    sample_group_timings.append({"sample_group": group_key, **sample_timing})
+                except Exception as exc:
+                    sample_failures[group_key] = str(exc)
+        finally:
+            timings["sample_total_seconds"] = perf_counter() - sample_total_start
+            restore_start = perf_counter()
+            context.scene.frame_set(original_frame)
+            timings["restore_frame_seconds"] = perf_counter() - restore_start
 
     write_payloads_start = perf_counter()
     payload_write_timings = []
@@ -806,6 +909,7 @@ def export_bone_payloads_for_draw_parts(
         "sample_group_count": len(sample_groups),
         "sample_cache_dir": sample_cache_dir,
         "sample_cache_enabled": bool(sample_cache_dir),
+        "sample_isolation": dict(sample_isolation or {}),
         "unique_sampled_bones_by_group": sample_group_bones,
         "estimated_sample_bone_pairs": sum(len(exported_frames) * count for count in sample_group_bones),
         "total_payload_bone_slots": sum(len(payload["bindings"]) for payload in prepared_payloads),
