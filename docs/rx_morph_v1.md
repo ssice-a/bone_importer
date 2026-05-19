@@ -219,3 +219,22 @@ Current and planned NumPy candidates:
 - Medium priority: use `foreach_get` into NumPy arrays for evaluated mesh positions, loop normals, tangents, polygon loop ranges, and loop vertex indices wherever Blender exposes the data.
 - Medium priority: accelerate TheHerta-like unique vertex reconstruction by building structured byte keys from NumPy arrays, then only using Python for final ordered de-duplication if needed.
 - Low priority: use NumPy for debug bounds, vertex-group statistics, and batch centroid calculations when those tools become slow on large meshes.
+
+## Export Performance Diagnostics
+
+`scripts/export_rx_test.py` writes `rx_export_perf.json` into the export directory. This report is the first place to check before optimizing because it separates setup, geometry export, bone export, morph export, and the internal bone sampling stages.
+
+The current bone payload exporter records:
+
+- `frame_set_seconds`: time spent advancing Blender's evaluated scene.
+- `pose_sample_seconds`: time spent reading/decomposing sampled pose matrices.
+- `write_payloads_seconds`: time spent writing per-DrawPart bone buffers.
+- `sample_groups`: cache hit/miss, sampled bone count, sample count, and optional `.npy` cache timings.
+
+For repeated local validation exports, enable the opt-in bone sample cache:
+
+```powershell
+$env:RX_EXPORT_USE_BONE_CACHE='1'
+```
+
+This creates `.rx_bone_sample_cache/*.npy` under the output directory unless `RX_BONE_SAMPLE_CACHE_DIR` is set. The cache is rebuildable exporter scratch data, not a runtime artifact. By default it uses a shallow fingerprint intended to keep cache lookup cheaper than Blender sampling; set `RX_BONE_SAMPLE_CACHE_DEEP=1` only when validating cache invalidation for complex constraint-target edits, because deep fingerprints can be slower than sampling.

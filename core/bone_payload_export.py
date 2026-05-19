@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from array import array
+import hashlib
+import json
 import os
 from time import perf_counter
 
@@ -27,6 +29,7 @@ from .layout import build_matrix_from_flat_values, convert_matrix_to_palette_row
 
 BONE_PAYLOAD_FLAGS_NONE = 0
 TQ_FLOATS_PER_BONE = 8
+BONE_SAMPLE_CACHE_VERSION = "rx_bone_sample_cache_v2"
 
 
 def resolve_bone_payload_paths(output_directory: str, draw_key: str):
@@ -318,6 +321,166 @@ def _binding_sample_key(binding):
     return (id(binding.source_armature), binding.source_armature.name, binding.source_bone)
 
 
+def _rounded_float_tuple(values, precision=8):
+    return tuple(round(float(value), precision) for value in values)
+
+
+def _matrix_payload(matrix):
+    return tuple(_rounded_float_tuple(row) for row in matrix)
+
+
+def _action_fingerprint(action):
+    if action is None:
+        return None
+    fcurve_rows = []
+    for fcurve in sorted(action.fcurves, key=lambda item: (item.data_path, item.array_index)):
+        keyframes = []
+        for keyframe in fcurve.keyframe_points:
+            keyframes.append(
+                (
+                    round(float(keyframe.co.x), 8),
+                    round(float(keyframe.co.y), 8),
+                    str(keyframe.interpolation),
+                )
+            )
+        fcurve_rows.append(
+            {
+                "data_path": str(fcurve.data_path),
+                "array_index": int(fcurve.array_index),
+                "keyframes": keyframes,
+            }
+        )
+    return {
+        "name": action.name,
+        "fcurves": fcurve_rows,
+    }
+
+
+def _object_action_fingerprint(obj):
+    animation_data = getattr(obj, "animation_data", None)
+    return _action_fingerprint(getattr(animation_data, "action", None)) if animation_data else None
+
+
+def _env_flag(name: str) -> bool:
+    return str(os.environ.get(name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _constraint_payload(constraint, deep=False):
+    target = getattr(constraint, "target", None)
+    payload = {
+        "name": constraint.name,
+        "type": constraint.type,
+        "mute": bool(getattr(constraint, "mute", False)),
+        "influence": round(float(getattr(constraint, "influence", 0.0)), 8),
+        "target": target.name if target is not None else "",
+        "subtarget": str(getattr(constraint, "subtarget", "") or ""),
+        "owner_space": str(getattr(constraint, "owner_space", "") or ""),
+        "target_space": str(getattr(constraint, "target_space", "") or ""),
+    }
+    if deep:
+        payload["target_matrix_world"] = _matrix_payload(target.matrix_world) if target is not None else ()
+        payload["target_action"] = _object_action_fingerprint(target) if target is not None else None
+    return payload
+
+
+def _armature_fingerprint(armature, deep=False):
+    """Build an opt-in cache fingerprint without making cache lookup slower than sampling."""
+    pose_rows = []
+    for pose_bone in armature.pose.bones:
+        pose_rows.append(
+            {
+                "name": pose_bone.name,
+                "parent": pose_bone.parent.name if pose_bone.parent else "",
+                "constraints": [_constraint_payload(constraint, deep=deep) for constraint in pose_bone.constraints],
+            }
+        )
+    return {
+        "name": armature.name,
+        "data_name": armature.data.name,
+        "matrix_world": _matrix_payload(armature.matrix_world),
+        "action": _object_action_fingerprint(armature),
+        "constraint_fingerprint": "deep" if deep else "shallow",
+        "pose_bones": pose_rows,
+    }
+
+
+def _blend_file_fingerprint():
+    blend_path = str(bpy.data.filepath or "")
+    if not blend_path or not os.path.exists(blend_path):
+        return {"path": blend_path, "mtime_ns": 0, "size": 0}
+    stat = os.stat(blend_path)
+    return {
+        "path": os.path.abspath(blend_path),
+        "mtime_ns": int(stat.st_mtime_ns),
+        "size": int(stat.st_size),
+    }
+
+
+def _build_sample_cache_key(context, exported_frames, sample_entries, correction_matrix):
+    deep_fingerprint = _env_flag("RX_BONE_SAMPLE_CACHE_DEEP")
+    armatures = {}
+    for _key, source_armature, _source_bone in sample_entries:
+        armatures[source_armature.name] = source_armature
+    correction_payload = None
+    if correction_matrix is not None:
+        correction_payload = _matrix_payload(correction_matrix)
+    payload = {
+        "format": BONE_SAMPLE_CACHE_VERSION,
+        "blend": _blend_file_fingerprint(),
+        "scene": getattr(context.scene, "name", ""),
+        "frames": list(int(frame) for frame in exported_frames),
+        "correction_matrix": correction_payload,
+        "sample_entries": [
+            (source_armature.name, source_bone)
+            for _key, source_armature, source_bone in sample_entries
+        ],
+        "armatures": [
+            _armature_fingerprint(armatures[name], deep=deep_fingerprint)
+            for name in sorted(armatures)
+        ],
+        "fingerprint_mode": "deep" if deep_fingerprint else "shallow",
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest(), payload
+
+
+def _resolve_sample_cache_dir(output_directory: str) -> str:
+    cache_dir = str(os.environ.get("RX_BONE_SAMPLE_CACHE_DIR", "") or "").strip()
+    if not cache_dir:
+        return ""
+    if cache_dir in {"1", "true", "TRUE"}:
+        cache_dir = os.path.join(bpy.path.abspath(output_directory or "//"), ".rx_bone_sample_cache")
+    return bpy.path.abspath(cache_dir)
+
+
+def _load_sample_cache(cache_dir: str, cache_hash: str, expected_shape: tuple[int, int, int]):
+    if not cache_dir:
+        return None, 0.0
+    cache_path = os.path.join(cache_dir, f"{cache_hash}.npy")
+    if not os.path.exists(cache_path):
+        return None, 0.0
+    start = perf_counter()
+    samples = np.load(cache_path, allow_pickle=False)
+    load_seconds = perf_counter() - start
+    if tuple(samples.shape) != tuple(expected_shape):
+        return None, load_seconds
+    if str(samples.dtype) != "float32":
+        return None, load_seconds
+    return np.asarray(samples, dtype="<f4"), load_seconds
+
+
+def _write_sample_cache(cache_dir: str, cache_hash: str, cache_payload: dict, samples):
+    if not cache_dir:
+        return "", 0.0
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"{cache_hash}.npy")
+    metadata_path = os.path.join(cache_dir, f"{cache_hash}.json")
+    start = perf_counter()
+    np.save(cache_path, np.asarray(samples, dtype="<f4"), allow_pickle=False)
+    write_json_file(metadata_path, cache_payload)
+    return cache_path, perf_counter() - start
+
+
 def _sample_pose_tq_group(context, exported_frames, sample_entries, correction_matrix):
     samples = np.empty((len(exported_frames), len(sample_entries), TQ_FLOATS_PER_BONE), dtype="<f4")
     scene = context.scene
@@ -442,6 +605,7 @@ def export_bone_payloads_for_draw_parts(
     sample_failures = {}
     sample_group_timings = []
     sample_total_start = perf_counter()
+    sample_cache_dir = _resolve_sample_cache_dir(output_directory)
     try:
         for group_key, group in sample_groups.items():
             sample_entries = tuple(
@@ -452,12 +616,70 @@ def export_bone_payloads_for_draw_parts(
                 )
             )
             try:
-                samples, sample_timing = _sample_pose_tq_group(
-                    context,
-                    exported_frames,
-                    sample_entries,
-                    group["correction_matrix"],
-                )
+                expected_shape = (len(exported_frames), len(sample_entries), TQ_FLOATS_PER_BONE)
+                cache_hash = ""
+                cache_payload = {"fingerprint_mode": "off"}
+                cache_key_seconds = 0.0
+                cache_load_seconds = 0.0
+                cache_path = ""
+                samples = None
+                if sample_cache_dir:
+                    cache_key_start = perf_counter()
+                    cache_hash, cache_payload = _build_sample_cache_key(
+                        context,
+                        exported_frames,
+                        sample_entries,
+                        group["correction_matrix"],
+                    )
+                    cache_key_seconds = perf_counter() - cache_key_start
+                    samples, cache_load_seconds = _load_sample_cache(
+                        sample_cache_dir,
+                        cache_hash,
+                        expected_shape,
+                    )
+                    cache_path = os.path.join(sample_cache_dir, f"{cache_hash}.npy")
+                if samples is None:
+                    samples, sample_timing = _sample_pose_tq_group(
+                        context,
+                        exported_frames,
+                        sample_entries,
+                        group["correction_matrix"],
+                    )
+                    cache_path, cache_write_seconds = _write_sample_cache(
+                        sample_cache_dir,
+                        cache_hash,
+                        cache_payload,
+                        samples,
+                    )
+                    sample_timing.update(
+                        {
+                            "cache_enabled": bool(sample_cache_dir),
+                            "cache_hit": False,
+                            "cache_hash": cache_hash,
+                            "cache_path": cache_path,
+                            "cache_key_seconds": cache_key_seconds,
+                            "cache_fingerprint_mode": cache_payload.get("fingerprint_mode", "shallow"),
+                            "cache_load_seconds": cache_load_seconds,
+                            "cache_write_seconds": cache_write_seconds,
+                        }
+                    )
+                else:
+                    sample_timing = {
+                        "sample_count": len(exported_frames),
+                        "unique_bones": len(sample_entries),
+                        "frame_set_seconds": 0.0,
+                        "pose_sample_seconds": 0.0,
+                        "total_seconds": cache_load_seconds,
+                        "sample_bone_pairs": len(exported_frames) * len(sample_entries),
+                        "cache_enabled": True,
+                        "cache_hit": True,
+                        "cache_hash": cache_hash,
+                        "cache_path": cache_path,
+                        "cache_key_seconds": cache_key_seconds,
+                        "cache_fingerprint_mode": cache_payload.get("fingerprint_mode", "shallow"),
+                        "cache_load_seconds": cache_load_seconds,
+                        "cache_write_seconds": 0.0,
+                    }
                 sample_caches[group_key] = {
                     "index_by_key": {entry[0]: index for index, entry in enumerate(sample_entries)},
                     "samples": samples,
@@ -582,6 +804,8 @@ def export_bone_payloads_for_draw_parts(
         "exported_payload_count": len(results),
         "sample_count": len(exported_frames),
         "sample_group_count": len(sample_groups),
+        "sample_cache_dir": sample_cache_dir,
+        "sample_cache_enabled": bool(sample_cache_dir),
         "unique_sampled_bones_by_group": sample_group_bones,
         "estimated_sample_bone_pairs": sum(len(exported_frames) * count for count in sample_group_bones),
         "total_payload_bone_slots": sum(len(payload["bindings"]) for payload in prepared_payloads),
