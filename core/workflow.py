@@ -5,10 +5,10 @@ import os
 from time import perf_counter
 
 import bpy
+from mathutils import Matrix
 
 from ..constants import DEFAULT_PART_ROW_COUNT
 from .animation_export import (
-    build_runtime_export_name_prefix,
     build_tqs_frame_buffer,
     finalize_animation_export_job,
     normalize_clip_name,
@@ -18,23 +18,18 @@ from .animation_export import (
     write_tqs_animation_frame,
 )
 from .bind import refresh_bind_for_proxy_armature as capture_bind_for_proxy_armature_internal
-from .collection_plan import (
-    CB1_OVERRIDE_NONE,
-    cb1_override_by_proxy_armature_name_from_collection,
-    proxy_armatures_from_export_collection,
-)
 from .context import (
     apply_part_id_layout,
     capture_selection_state,
     ensure_mesh_parented_to_proxy_armature,
     find_proxy_armature_for_object,
     find_source_mesh_for_object,
-    list_directly_selected_proxy_armatures,
     list_selected_proxy_armatures,
     make_object_active,
     restore_selection_state,
 )
 from .debug import build_proxy_debug_snapshot, print_debug_snapshot
+from .draw_part import build_target_draw_parts
 from .export import (
     build_palette_export_write_plan_for_proxy_armatures,
     cache_current_palette_segment,
@@ -49,6 +44,7 @@ from .io import (
     write_palette_row_patches_to_disk,
 )
 from .layout import calculate_slot_capacity_for_part_size
+from .manifest import write_export_manifest
 from .models import (
     BatchAnimationExportResult,
     BatchBindRefreshResult,
@@ -70,8 +66,8 @@ from .proxy import (
     build_proxy_bone_definitions,
     capture_proxy_bind_matrices,
     configure_proxy_pose_bones,
+    ensure_suffixed_numeric_vertex_groups,
     ensure_proxy_armature_modifier,
-    get_or_create_proxy_armature,
     list_other_armature_modifier_names,
     rebuild_proxy_edit_bones,
 )
@@ -103,29 +99,137 @@ def build_proxy_generation_result(source_mesh, proxy_armature, proxy_bone_build,
     )
 
 
-def generate_proxy_rig_for_mesh(context, source_mesh):
-    """Generate a proxy armature for one mesh."""
-    if source_mesh is None or source_mesh.type != "MESH":
-        raise ValueError("Active object must be a mesh")
+def _build_shared_proxy_armature_name(context):
+    scene = getattr(context, "scene", None)
+    export_collection = getattr(scene, "bi_export_collection", None) if scene is not None else None
+    if export_collection is not None:
+        base_name = str(export_collection.name or "RX")
+    else:
+        base_name = "RX"
+    safe_name = "".join(character if character.isalnum() or character in "._-" else "_" for character in base_name)
+    return f"{safe_name}_SharedProxy"
 
-    proxy_bone_build = build_proxy_bone_definitions(source_mesh)
-    bone_definitions = proxy_bone_build["bone_definitions"]
-    if not bone_definitions:
-        raise ValueError(f"No numeric vertex groups with weighted vertices were found on {source_mesh.name}")
 
-    proxy_armature = get_or_create_proxy_armature(context, source_mesh)
-    apply_part_id_layout(proxy_armature, require_configured=False)
+def _get_or_create_shared_proxy_armature(context, selected_meshes):
+    proxy_armature_name = _build_shared_proxy_armature_name(context)
+    proxy_armature = bpy.data.objects.get(proxy_armature_name)
+    if proxy_armature and proxy_armature.type != "ARMATURE":
+        raise ValueError(f"Object named {proxy_armature_name} exists but is not an armature")
+
+    if proxy_armature is None:
+        armature_data = bpy.data.armatures.new(proxy_armature_name)
+        proxy_armature = bpy.data.objects.new(proxy_armature_name, armature_data)
+        first_mesh = selected_meshes[0]
+        target_collection = first_mesh.users_collection[0] if first_mesh.users_collection else context.collection
+        target_collection.objects.link(proxy_armature)
+
+    proxy_armature.matrix_world = Matrix.Identity(4)
+    proxy_armature.show_in_front = True
+    proxy_armature.data.display_type = "STICK"
+    proxy_armature.bi_is_proxy_armature = True
+    proxy_armature.bi_source_mesh_name = ""
+    proxy_armature.bi_part_id = -1
+    proxy_armature.bi_part_base = 0
+    proxy_armature.bi_part_size = DEFAULT_PART_ROW_COUNT
+    return proxy_armature
+
+
+def _transform_bone_definitions_to_armature_space(mesh_obj, proxy_armature, bone_definitions):
+    mesh_to_armature = proxy_armature.matrix_world.inverted() @ mesh_obj.matrix_world
+    transformed_definitions = []
+    for bone_definition in bone_definitions:
+        transformed_definition = dict(bone_definition)
+        transformed_definition["head"] = mesh_to_armature @ bone_definition["head"]
+        transformed_definition["tail"] = mesh_to_armature @ bone_definition["tail"]
+        transformed_definitions.append(transformed_definition)
+    return transformed_definitions
+
+
+def _generate_shared_proxy_rig_for_meshes(context, selected_meshes):
+    """Generate one shared proxy armature for all selected draw-part meshes."""
+    if not selected_meshes:
+        raise ValueError("Select at least one mesh object")
+
+    proxy_armature = _get_or_create_shared_proxy_armature(context, selected_meshes)
+    combined_bone_definitions = []
+    skipped_mesh_names = []
+    skipped_details = []
+    generated_meshes = 0
+    generated_bones = 0
+    max_slot_id = -1
+    other_armature_modifier_names = []
+
+    for mesh_obj in selected_meshes:
+        if mesh_obj is None or mesh_obj.type != "MESH":
+            continue
+        if len(mesh_obj.vertex_groups) == 0:
+            skipped_mesh_names.append(mesh_obj.name)
+            skipped_details.append(f"{mesh_obj.name}: no vertex groups")
+            continue
+        try:
+            ensure_suffixed_numeric_vertex_groups(mesh_obj)
+            proxy_bone_build = build_proxy_bone_definitions(mesh_obj)
+        except ValueError as exc:
+            skipped_mesh_names.append(mesh_obj.name)
+            skipped_details.append(f"{mesh_obj.name}: {exc}")
+            continue
+
+        bone_definitions = proxy_bone_build["bone_definitions"]
+        if not bone_definitions:
+            skipped_mesh_names.append(mesh_obj.name)
+            skipped_details.append(f"{mesh_obj.name}: no weighted numeric vertex groups")
+            continue
+
+        combined_bone_definitions.extend(
+            _transform_bone_definitions_to_armature_space(mesh_obj, proxy_armature, bone_definitions)
+        )
+        generated_meshes += 1
+        generated_bones += len(bone_definitions)
+        if bone_definitions:
+            max_slot_id = max(max_slot_id, max(int(definition["slot_id"]) for definition in bone_definitions))
+        other_armature_modifier_names.extend(list_other_armature_modifier_names(mesh_obj, proxy_armature))
+
+    if not combined_bone_definitions:
+        raise ValueError("No selected mesh produced proxy bones")
 
     make_object_active(context, proxy_armature, mode="EDIT")
-    rebuild_proxy_edit_bones(proxy_armature, bone_definitions)
+    rebuild_proxy_edit_bones(proxy_armature, combined_bone_definitions)
     bpy.ops.object.mode_set(mode="POSE")
 
     configured_bone_count = configure_proxy_pose_bones(proxy_armature)
     capture_proxy_bind_matrices(proxy_armature)
     clear_previous_palette_cache(proxy_armature)
-    ensure_proxy_armature_modifier(source_mesh, proxy_armature)
-    ensure_mesh_parented_to_proxy_armature(source_mesh, proxy_armature)
-    return build_proxy_generation_result(source_mesh, proxy_armature, proxy_bone_build, configured_bone_count)
+    for mesh_obj in selected_meshes:
+        mesh_obj.bi_proxy_armature_name = proxy_armature.name
+        ensure_proxy_armature_modifier(mesh_obj, proxy_armature)
+        ensure_mesh_parented_to_proxy_armature(mesh_obj, proxy_armature)
+
+    return BatchProxyRigGenerationResult(
+        generated_meshes=generated_meshes,
+        generated_armatures=1,
+        generated_bones=configured_bone_count,
+        skipped_meshes=tuple(skipped_mesh_names),
+        skipped_details=tuple(skipped_details),
+    )
+
+
+def generate_proxy_rig_for_mesh(context, source_mesh):
+    """Generate the shared proxy armature from one mesh."""
+    if source_mesh is None or source_mesh.type != "MESH":
+        raise ValueError("Active object must be a mesh")
+
+    result = _generate_shared_proxy_rig_for_meshes(context, [source_mesh])
+    proxy_armature = find_proxy_armature_for_object(source_mesh)
+    proxy_bone_build = build_proxy_bone_definitions(source_mesh)
+    return ProxyRigGenerationResult(
+        source_mesh_name=source_mesh.name,
+        armature_name=proxy_armature.name if proxy_armature else "",
+        configured_bones=result.generated_bones,
+        max_slot=max((definition["slot_id"] for definition in proxy_bone_build["bone_definitions"]), default=-1),
+        slot_capacity=calculate_slot_capacity_for_part_size(DEFAULT_PART_ROW_COUNT),
+        skipped_groups=tuple(proxy_bone_build["skipped_group_names"]),
+        other_armature_modifiers=list_other_armature_modifier_names(source_mesh, proxy_armature),
+    )
 
 
 def generate_proxy_rig_from_active_mesh(context):
@@ -134,90 +238,53 @@ def generate_proxy_rig_from_active_mesh(context):
 
 
 def generate_proxy_rigs_from_selected_meshes(context):
-    """Generate proxy armatures for all selected meshes."""
+    """Generate one shared proxy armature for all selected meshes."""
     selected_meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
     if not selected_meshes:
         raise ValueError("Select at least one mesh object")
 
     selection_state = capture_selection_state(context)
-    generated_meshes = 0
-    generated_armatures = set()
-    generated_bones = 0
-    skipped_mesh_names = []
-    skipped_details = []
 
     try:
-        for mesh_obj in selected_meshes:
-            if len(mesh_obj.vertex_groups) == 0:
-                skipped_mesh_names.append(mesh_obj.name)
-                skipped_details.append(f"{mesh_obj.name}: no vertex groups")
-                continue
-            try:
-                result = generate_proxy_rig_for_mesh(context, mesh_obj)
-            except ValueError as exc:
-                skipped_mesh_names.append(mesh_obj.name)
-                skipped_details.append(f"{mesh_obj.name}: {exc}")
-                continue
-
-            generated_meshes += 1
-            generated_armatures.add(result.armature_name)
-            generated_bones += result.configured_bones
+        result = _generate_shared_proxy_rig_for_meshes(context, selected_meshes)
     finally:
         restore_selection_state(context, selection_state)
 
-    if generated_meshes == 0:
-        raise ValueError("No selected mesh produced proxy bones")
-
-    return BatchProxyRigGenerationResult(
-        generated_meshes=generated_meshes,
-        generated_armatures=len(generated_armatures),
-        generated_bones=generated_bones,
-        skipped_meshes=tuple(skipped_mesh_names),
-        skipped_details=tuple(skipped_details),
-    )
+    return result
 
 
 def build_target_proxy_armatures(context):
-    """Resolve target proxy armatures from direct selection first, then active object."""
+    """Resolve proxy armatures that should have bind data refreshed."""
     scene = getattr(context, "scene", None)
     export_collection = getattr(scene, "bi_export_collection", None) if scene is not None else None
     if export_collection is not None:
-        collection_armatures = proxy_armatures_from_export_collection(export_collection)
+        collection_armatures = {
+            draw_part.proxy_armature.name_full: draw_part.proxy_armature
+            for draw_part in build_target_draw_parts(context)
+        }
         if collection_armatures:
-            return collection_armatures
-        raise ValueError(f"RX Export Collection '{export_collection.name}' has no linked proxy armatures with Part Id")
+            return tuple(collection_armatures.values())
+        raise ValueError(f"RX Export Collection '{export_collection.name}' has no linked proxy armatures")
 
-    directly_selected_armatures = list_directly_selected_proxy_armatures(context)
-    if len(directly_selected_armatures) > 1:
+    directly_selected_armatures = tuple(
+        obj for obj in context.selected_objects
+        if obj.type == "ARMATURE" and getattr(obj, "bi_is_proxy_armature", False)
+    )
+    if directly_selected_armatures:
         return directly_selected_armatures
 
     active_proxy_armature = find_proxy_armature_for_object(context.active_object)
     if active_proxy_armature is not None:
         return (active_proxy_armature,)
 
-    selected_armatures = list_selected_proxy_armatures(context)
+    selected_armatures = {
+        draw_part.proxy_armature.name_full: draw_part.proxy_armature
+        for draw_part in build_target_draw_parts(context)
+    }
     if selected_armatures:
-        return (selected_armatures[0],)
+        return tuple(selected_armatures.values())
 
-    raise ValueError("No selected proxy armatures with Part Id found")
-
-
-def build_cb1_override_by_mesh_key(context, proxy_armatures):
-    """Resolve collection-level CB1 override settings for generated ini snippets."""
-    scene = getattr(context, "scene", None)
-    export_collection = getattr(scene, "bi_export_collection", None) if scene is not None else None
-    if export_collection is None:
-        return {}
-
-    override_by_proxy_name = cb1_override_by_proxy_armature_name_from_collection(export_collection)
-    override_by_mesh_key = {}
-    for proxy_armature in proxy_armatures:
-        proxy_name = str(getattr(proxy_armature, "name_full", getattr(proxy_armature, "name", "")) or "")
-        cb1_override = override_by_proxy_name.get(proxy_name, CB1_OVERRIDE_NONE)
-        if cb1_override == CB1_OVERRIDE_NONE:
-            continue
-        override_by_mesh_key[build_runtime_export_name_prefix(proxy_armature)] = cb1_override
-    return override_by_mesh_key
+    raise ValueError("No selected proxy armatures found")
 
 
 def refresh_bind_for_proxy_armature(proxy_armature):
@@ -313,10 +380,10 @@ def export_palette_for_proxy_armatures(context, proxy_armatures, output_path, wr
 
 
 def export_palette_for_selected_proxy_armatures(context, output_path, write_metadata=True):
-    """Export the current target proxy armature set as a static palette file."""
+    """Export the current target draw-part set as a static palette file."""
     return export_palette_for_proxy_armatures(
         context,
-        build_target_proxy_armatures(context),
+        build_target_draw_parts(context),
         output_path,
         write_metadata,
     )
@@ -335,9 +402,9 @@ def export_palette_for_active_proxy(active_object, output_path, write_metadata=T
     return export_palette_for_proxy_armature(proxy_armature, output_path, write_metadata)
 
 
-def export_animation_for_proxy_armatures(
+def export_animation_for_draw_parts(
     context,
-    proxy_armatures,
+    draw_parts,
     output_directory,
     clip_name,
     clip_id,
@@ -350,10 +417,10 @@ def export_animation_for_proxy_armatures(
     default_loop_end=-1,
     write_metadata=True,
 ):
-    """Export one scene-evaluated TQS animation set per proxy armature."""
-    normalized_armatures = tuple(proxy_armatures)
-    if not normalized_armatures:
-        raise ValueError("No proxy armatures to export")
+    """Export one scene-evaluated TQS animation set per runtime draw part."""
+    normalized_draw_parts = tuple(draw_parts)
+    if not normalized_draw_parts:
+        raise ValueError("No draw parts to export")
 
     normalized_clip_name = normalize_clip_name(clip_name)
     selection_state = capture_selection_state(context)
@@ -381,20 +448,23 @@ def export_animation_for_proxy_armatures(
     master_playback_path = ""
     morph_manifest_path = ""
     generated_ini_path = ""
+    export_manifest_path = ""
     exported_morph_meshes = 0
     total_morph_channels = 0
     morph_results = []
-    cb1_override_by_mesh_key = build_cb1_override_by_mesh_key(context, normalized_armatures)
+    cb1_override_by_mesh_key = {
+        draw_part.draw_key: draw_part.cb1_override
+        for draw_part in normalized_draw_parts
+    }
     total_start_time = perf_counter()
     window_manager = context.window_manager if context is not None else None
 
     try:
-        for proxy_armature in normalized_armatures:
+        for draw_part in normalized_draw_parts:
             try:
-                prepare_proxy_armature(proxy_armature, require_part_id=True)
                 export_jobs.append(
                     prepare_animation_export_job(
-                        proxy_armature=proxy_armature,
+                        proxy_armature=draw_part,
                         output_directory=output_directory,
                         clip_name=normalized_clip_name,
                         clip_id=clip_id,
@@ -409,7 +479,7 @@ def export_animation_for_proxy_armatures(
                     )
                 )
             except Exception as exc:
-                failed_armatures.append(f"{proxy_armature.name}: {exc}")
+                failed_armatures.append(f"{draw_part.draw_key}: {exc}")
                 continue
 
         if export_jobs and scene is not None:
@@ -449,7 +519,7 @@ def export_animation_for_proxy_armatures(
                                 export_job["frame_buffer"],
                             )
                         except Exception as exc:
-                            failed_armatures.append(f"{export_job['proxy_armature'].name}: {exc}")
+                            failed_armatures.append(f"{export_job['metadata'].get('draw_key', export_job['proxy_armature'].name)}: {exc}")
                             for cleanup_path in (
                                 export_job["tqs_path"],
                                 export_job["bind_path"],
@@ -472,7 +542,7 @@ def export_animation_for_proxy_armatures(
             try:
                 result = finalize_animation_export_job(export_job)
             except Exception as exc:
-                failed_armatures.append(f"{export_job['proxy_armature'].name}: {exc}")
+                failed_armatures.append(f"{export_job['metadata'].get('draw_key', export_job['proxy_armature'].name)}: {exc}")
                 for cleanup_path in (
                     export_job["tqs_path"],
                     export_job["bind_path"],
@@ -530,6 +600,7 @@ def export_animation_for_proxy_armatures(
                 export_results=tuple(completed_results),
                 morph_results=tuple(morph_results),
                 cb1_override_by_mesh_key=cb1_override_by_mesh_key,
+                draw_parts=normalized_draw_parts,
             )
         except Exception as exc:
             failed_armatures.append(f"{normalized_clip_name} generated ini: {exc}")
@@ -537,6 +608,21 @@ def export_animation_for_proxy_armatures(
         else:
             if generated_ini_path:
                 exported_files.append(generated_ini_path)
+
+        try:
+            export_manifest_path = write_export_manifest(
+                output_directory=output_directory,
+                clip_name=normalized_clip_name,
+                clip_id=clip_id,
+                draw_parts=normalized_draw_parts,
+                export_results=tuple(completed_results),
+                morph_results=tuple(morph_results),
+            )
+        except Exception as exc:
+            failed_armatures.append(f"{normalized_clip_name} export manifest: {exc}")
+        else:
+            if export_manifest_path:
+                exported_files.append(export_manifest_path)
     finally:
         if scene is not None:
             scene.frame_set(original_frame)
@@ -554,14 +640,14 @@ def export_animation_for_proxy_armatures(
         f"{elapsed_seconds:.2f}s | frame_set={frame_set_seconds:.2f}s"
         f" | frame_write={frame_write_seconds:.2f}s | finalize={finalize_seconds:.2f}s"
         f" | other={other_seconds:.2f}s | sampled_frames={sampled_frames}"
-        f" | selected={len(normalized_armatures)} | exported={exported_armatures}"
+        f" | selected={len(normalized_draw_parts)} | exported={exported_armatures}"
     )
 
     return BatchAnimationExportResult(
         output_directory=bpy.path.abspath(output_directory or "//"),
         clip_name=normalized_clip_name,
         clip_id=int(clip_id),
-        selected_armatures=len(normalized_armatures),
+        selected_armatures=len(normalized_draw_parts),
         exported_armatures=exported_armatures,
         total_frames=total_frames,
         total_exported_bones=total_exported_bones,
@@ -583,9 +669,9 @@ def export_animation_for_proxy_armatures(
     )
 
 
-def export_morph_for_proxy_armatures(
+def export_morph_for_draw_parts(
     context,
-    proxy_armatures,
+    draw_parts,
     output_directory,
     clip_name,
     clip_id,
@@ -599,9 +685,9 @@ def export_morph_for_proxy_armatures(
     write_metadata=True,
 ):
     """Export only RX morph buffers while still seeding the shared timeline sidecars."""
-    normalized_armatures = tuple(proxy_armatures)
-    if not normalized_armatures:
-        raise ValueError("No proxy armatures to export")
+    normalized_draw_parts = tuple(draw_parts)
+    if not normalized_draw_parts:
+        raise ValueError("No draw parts to export")
 
     normalized_clip_name = normalize_clip_name(clip_name)
     selection_state = capture_selection_state(context)
@@ -611,11 +697,15 @@ def export_morph_for_proxy_armatures(
     total_morph_channels = 0
     morph_manifest_path = ""
     generated_ini_path = ""
+    export_manifest_path = ""
     timeline_static_path = ""
     master_playback_path = ""
     sampled_frames = 0
     morph_results = []
-    cb1_override_by_mesh_key = build_cb1_override_by_mesh_key(context, normalized_armatures)
+    cb1_override_by_mesh_key = {
+        draw_part.draw_key: draw_part.cb1_override
+        for draw_part in normalized_draw_parts
+    }
     total_start_time = perf_counter()
     scene = context.scene if context is not None else None
     original_frame = scene.frame_current if scene is not None else 0
@@ -627,6 +717,10 @@ def export_morph_for_proxy_armatures(
             morph_channel_mode = getattr(scene, "bi_morph_channel_mode", MORPH_CHANNEL_MODE_ANIMATED)
             morph_include_normals = bool(getattr(scene, "bi_morph_include_normals", True))
             morph_include_tangents = bool(getattr(scene, "bi_morph_include_tangents", False))
+            external_morph_source = getattr(scene, "bi_morph_source_object", None)
+            target_draw_key = str(getattr(scene, "bi_morph_target_draw_key", "") or "")
+            if target_draw_key == "__NONE__":
+                target_draw_key = ""
 
             try:
                 (
@@ -659,13 +753,22 @@ def export_morph_for_proxy_armatures(
                     if shared_path:
                         exported_files.append(shared_path)
 
-            for proxy_armature in normalized_armatures:
+            morph_draw_parts = normalized_draw_parts
+            if external_morph_source is not None:
+                if not target_draw_key:
+                    raise ValueError("Choose a Target Draw Part when exporting an external Shape Key Source")
+                morph_draw_parts = tuple(
+                    draw_part for draw_part in normalized_draw_parts if draw_part.draw_key == target_draw_key
+                )
+                if not morph_draw_parts:
+                    raise ValueError(f"Target Draw Part not found: {target_draw_key}")
+
+            for draw_part in morph_draw_parts:
                 try:
-                    prepare_proxy_armature(proxy_armature, require_part_id=True)
-                    source_mesh = find_source_mesh_for_object(proxy_armature)
+                    source_mesh = external_morph_source if external_morph_source is not None else draw_part.source_object
                     morph_result = export_morph_mesh_for_proxy_armature(
                         context=context,
-                        proxy_armature=proxy_armature,
+                        proxy_armature=draw_part.proxy_armature,
                         source_mesh=source_mesh,
                         output_directory=output_directory,
                         clip_name=normalized_clip_name,
@@ -677,9 +780,11 @@ def export_morph_for_proxy_armatures(
                         include_tangents=morph_include_tangents,
                         channel_mode=morph_channel_mode,
                         write_metadata=write_metadata,
+                        draw_part=draw_part,
+                        mesh_key=draw_part.draw_key,
                     )
                 except Exception as exc:
-                    failed_armatures.append(f"{proxy_armature.name} morph: {exc}")
+                    failed_armatures.append(f"{draw_part.draw_key} morph: {exc}")
                     continue
 
                 if morph_result is None:
@@ -719,6 +824,7 @@ def export_morph_for_proxy_armatures(
                     export_results=(),
                     morph_results=tuple(morph_results),
                     cb1_override_by_mesh_key=cb1_override_by_mesh_key,
+                    draw_parts=normalized_draw_parts,
                 )
             except Exception as exc:
                 failed_armatures.append(f"{normalized_clip_name} generated ini: {exc}")
@@ -726,6 +832,31 @@ def export_morph_for_proxy_armatures(
             else:
                 if generated_ini_path:
                     exported_files.append(generated_ini_path)
+
+            try:
+                export_manifest_path = write_export_manifest(
+                    output_directory=output_directory,
+                    clip_name=normalized_clip_name,
+                    clip_id=clip_id,
+                    draw_parts=normalized_draw_parts,
+                export_results=(),
+                morph_results=tuple(morph_results),
+                clip_metadata={
+                    "frame_start": int(frame_start),
+                    "frame_end": int(frame_end),
+                    "frame_step": int(frame_step),
+                    "frame_count": int(sampled_frames),
+                    "fps": float(fps),
+                    "default_ticks_per_sample": max(int(presents_per_step), 1),
+                    "default_loop_start_sample": 0,
+                    "default_loop_end_sample": max(int(sampled_frames) - 1, 0),
+                },
+            )
+            except Exception as exc:
+                failed_armatures.append(f"{normalized_clip_name} export manifest: {exc}")
+            else:
+                if export_manifest_path:
+                    exported_files.append(export_manifest_path)
     finally:
         if scene is not None:
             scene.frame_set(original_frame)
@@ -736,7 +867,7 @@ def export_morph_for_proxy_armatures(
         output_directory=bpy.path.abspath(output_directory or "//"),
         clip_name=normalized_clip_name,
         clip_id=int(clip_id),
-        selected_armatures=len(normalized_armatures),
+        selected_armatures=len(normalized_draw_parts),
         exported_morph_meshes=exported_morph_meshes,
         total_morph_channels=total_morph_channels,
         sampled_frames=sampled_frames,
@@ -764,10 +895,10 @@ def export_animation_for_selected_proxy_armatures(
     default_loop_end=-1,
     write_metadata=True,
 ):
-    """Export standalone RX clip buffers for the current target proxy armature set."""
-    return export_animation_for_proxy_armatures(
+    """Export standalone RX clip buffers for the current target draw-part set."""
+    return export_animation_for_draw_parts(
         context,
-        build_target_proxy_armatures(context),
+        build_target_draw_parts(context),
         output_directory,
         clip_name,
         clip_id,
@@ -796,10 +927,10 @@ def export_morph_for_selected_proxy_armatures(
     default_loop_end=-1,
     write_metadata=True,
 ):
-    """Export standalone RX morph buffers for the current target proxy armature set."""
-    return export_morph_for_proxy_armatures(
+    """Export standalone RX morph buffers for the current target draw-part set."""
+    return export_morph_for_draw_parts(
         context,
-        build_target_proxy_armatures(context),
+        build_target_draw_parts(context),
         output_directory,
         clip_name,
         clip_id,
@@ -869,7 +1000,7 @@ def import_palette_for_selected_proxy_armatures(context, binary_path, segment="C
     """Import the same palette into all selected proxy armatures."""
     selected_armatures = list_selected_proxy_armatures(context)
     if not selected_armatures:
-        raise ValueError("No selected proxy armatures with Part Id found")
+        raise ValueError("No selected proxy armatures found")
 
     selection_state = capture_selection_state(context)
     imported_armatures = 0

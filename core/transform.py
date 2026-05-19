@@ -40,7 +40,13 @@ def normalize_buffer_correction_mode(correction_mode):
 
 def get_proxy_buffer_correction_mode(proxy_armature):
     """Read the per-proxy special buffer correction mode."""
-    return normalize_buffer_correction_mode(getattr(proxy_armature, "bi_buffer_correction_mode", BUFFER_CORRECTION_NONE))
+    return normalize_buffer_correction_mode(
+        getattr(
+            proxy_armature,
+            "buffer_correction_mode",
+            getattr(proxy_armature, "bi_buffer_correction_mode", BUFFER_CORRECTION_NONE),
+        )
+    )
 
 
 def get_buffer_correction_code(correction_mode):

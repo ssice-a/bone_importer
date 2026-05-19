@@ -13,6 +13,7 @@ from .core.transform import BUFFER_CORRECTION_ITEMS, BUFFER_CORRECTION_NONE
 
 REGISTERED_PROPERTY_PATHS = (
     (bpy.types.PoseBone, "bi_slot_id"),
+    (bpy.types.PoseBone, "bi_mesh_key"),
     (bpy.types.PoseBone, "bi_export_enabled"),
     (bpy.types.PoseBone, "bi_is_proxy"),
     (bpy.types.PoseBone, "bi_bone_type"),
@@ -27,6 +28,8 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_previous_offset"),
     (bpy.types.Object, "bi_buffer_size"),
     (bpy.types.Object, "bi_buffer_correction_mode"),
+    (bpy.types.Object, "bi_base_position_path"),
+    (bpy.types.Object, "bi_base_position_stride"),
     (bpy.types.Collection, "bi_cb1_override"),
     (bpy.types.Scene, "bi_output_path"),
     (bpy.types.Scene, "bi_export_collection"),
@@ -43,10 +46,32 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Scene, "bi_morph_include_normals"),
     (bpy.types.Scene, "bi_morph_include_tangents"),
     (bpy.types.Scene, "bi_morph_channel_mode"),
+    (bpy.types.Scene, "bi_morph_source_object"),
+    (bpy.types.Scene, "bi_morph_target_draw_key"),
     (bpy.types.Scene, "bi_import_path"),
     (bpy.types.Scene, "bi_import_segment"),
     (bpy.types.Scene, "bi_write_metadata"),
 )
+
+
+def _draw_part_enum_items(_self, context):
+    """Build the Target Draw Part dropdown from the active manifest source."""
+    try:
+        from .core.draw_part import build_target_draw_parts
+
+        draw_parts = build_target_draw_parts(context)
+    except Exception:
+        return [("__NONE__", "No Draw Part", "Set an RX Export Collection or select draw-part objects")]
+    if not draw_parts:
+        return [("__NONE__", "No Draw Part", "Set an RX Export Collection or select draw-part objects")]
+    return [
+        (
+            draw_part.draw_key,
+            f"{draw_part.source_object.name}  #{draw_part.part_id}",
+            f"{draw_part.hash} | indices={draw_part.match_index_count} | first={draw_part.first_index}",
+        )
+        for draw_part in draw_parts
+    ]
 
 
 def register_addon_properties():
@@ -56,6 +81,11 @@ def register_addon_properties():
         default=-1,
         min=-1,
         description="VS-T0 slot id. V1 expects the proxy bone name and vertex group name to match this slot.",
+    )
+    bpy.types.PoseBone.bi_mesh_key = bpy.props.StringProperty(
+        name="Mesh Key",
+        default="",
+        description="Mesh/part suffix parsed from names like 0__Body. Export uses it to split shared rigs into local slot groups.",
     )
     bpy.types.PoseBone.bi_export_enabled = bpy.props.BoolProperty(
         name="Export Enabled",
@@ -143,6 +173,18 @@ def register_addon_properties():
         items=BUFFER_CORRECTION_ITEMS,
         default=BUFFER_CORRECTION_NONE,
         description="Optional extra correction used by special buffers such as eyelashes.",
+    )
+    bpy.types.Object.bi_base_position_path = bpy.props.StringProperty(
+        name="Base Position VB",
+        default="",
+        subtype="FILE_PATH",
+        description="Explicit base Position buffer used by morph export for this draw part.",
+    )
+    bpy.types.Object.bi_base_position_stride = bpy.props.IntProperty(
+        name="Base Position Stride",
+        default=0,
+        min=0,
+        description="Stride of the explicit base Position buffer. Use 16 for packed EFMI vb0 or 40 for PNTA40.",
     )
     bpy.types.Collection.bi_cb1_override = bpy.props.EnumProperty(
         name="RX CB1 Override",
@@ -243,6 +285,16 @@ def register_addon_properties():
         ],
         default="ANIMATED",
         description="Choose whether morph export only writes animated channels or all available shape-key channels.",
+    )
+    bpy.types.Scene.bi_morph_source_object = bpy.props.PointerProperty(
+        name="Shape Key Source",
+        type=bpy.types.Object,
+        description="Optional external object to export shape-key animation from. If unset, each draw part's own object is used.",
+    )
+    bpy.types.Scene.bi_morph_target_draw_key = bpy.props.EnumProperty(
+        name="Target Draw Part",
+        items=_draw_part_enum_items,
+        description="Draw part/IB that receives the selected external shape-key source.",
     )
     bpy.types.Scene.bi_import_path = bpy.props.StringProperty(
         name="Import Path",

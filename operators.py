@@ -2,7 +2,7 @@
 
 import bpy
 
-from .core.collection_plan import proxy_armatures_from_export_collection
+from .core.draw_part import draw_parts_from_export_collection
 from .core.context import find_proxy_armature_for_object, list_selected_proxy_armatures
 from .core.workflow import (
     clear_previous_palette_for_active_proxy,
@@ -16,13 +16,17 @@ from .core.workflow import (
     import_palette_for_selected_proxy_armatures,
     refresh_bind_for_selected_proxy_armatures,
 )
+from .core.proxy import restore_numeric_vertex_group_names
 
 
 def _has_export_collection_targets(context) -> bool:
     scene = getattr(context, "scene", None)
     if scene is None:
         return False
-    return bool(proxy_armatures_from_export_collection(getattr(scene, "bi_export_collection", None)))
+    try:
+        return bool(draw_parts_from_export_collection(getattr(scene, "bi_export_collection", None)))
+    except Exception:
+        return False
 
 
 class BI_OT_generate_proxy_rig(bpy.types.Operator):
@@ -48,7 +52,7 @@ class BI_OT_generate_proxy_rig(bpy.types.Operator):
                 return {"CANCELLED"}
 
             message = (
-                f"Generated {result.generated_armatures} armatures for {result.generated_meshes} meshes"
+                f"Generated shared proxy armature for {result.generated_meshes} mesh(es)"
                 f"; total bones {result.generated_bones}"
             )
             if result.skipped_meshes:
@@ -89,6 +93,32 @@ class BI_OT_generate_proxy_rig(bpy.types.Operator):
                 {"WARNING"},
                 f"Other armature modifiers are still active on the mesh: {modifier_names}. This can cause double deformation.",
             )
+        return {"FINISHED"}
+
+
+class BI_OT_restore_numeric_vertex_groups(bpy.types.Operator):
+    """Restore suffixed proxy vertex groups back to pure numeric names."""
+
+    bl_idname = "object.bi_restore_numeric_vertex_groups"
+    bl_label = "Restore Numeric Groups"
+    bl_description = "Rename selected mesh vertex groups like 0__Body back to 0 for external model export"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return any(obj.type == "MESH" and len(obj.vertex_groups) > 0 for obj in context.selected_objects)
+
+    def execute(self, context):
+        renamed_count = 0
+        failed_meshes = []
+        for mesh_obj in [obj for obj in context.selected_objects if obj.type == "MESH"]:
+            try:
+                renamed_count += len(restore_numeric_vertex_group_names(mesh_obj))
+            except ValueError as exc:
+                failed_meshes.append(f"{mesh_obj.name}: {exc}")
+        if failed_meshes:
+            self.report({"WARNING"}, " | ".join(failed_meshes))
+        self.report({"INFO"}, f"Restored {renamed_count} vertex group name(s)")
         return {"FINISHED"}
 
 

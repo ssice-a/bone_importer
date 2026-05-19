@@ -1,5 +1,7 @@
 """代理骨架生成与 bind 捕获相关的辅助函数。"""
 
+import re
+
 import bpy
 from mathutils import Vector
 
@@ -13,9 +15,86 @@ from ..constants import (
 from .layout import flatten_matrix_to_list
 
 
+SLOT_NAME_SEPARATOR = "__"
+
+
 def parse_slot_id_from_name(name):
     """从顶点组名或代理骨名中解析槽位编号。"""
-    return int(str(name).strip())
+    match = re.match(r"^\s*(\d+)(?:__.*)?\s*$", str(name))
+    if match is None:
+        raise ValueError(f"Name does not start with a numeric slot id: {name}")
+    return int(match.group(1))
+
+
+def parse_slot_name_parts(name):
+    """Return (slot_id, suffix) for '<slot>__<mesh>' names."""
+    text = str(name).strip()
+    match = re.match(r"^(\d+)(?:__(.*))?$", text)
+    if match is None:
+        raise ValueError(f"Name does not start with a numeric slot id: {name}")
+    return int(match.group(1)), (match.group(2) or "")
+
+
+def build_slot_suffix_for_mesh(mesh_obj):
+    """Build a safe suffix for Blender-visible proxy vertex group names."""
+    suffix = str(getattr(mesh_obj, "name", "") or "Mesh").strip()
+    return suffix.replace(SLOT_NAME_SEPARATOR, "_").replace("\n", "_").replace("\r", "_")
+
+
+def build_suffixed_slot_name(slot_id, suffix):
+    """Keep the slot id first so numeric sorting stays stable."""
+    return f"{int(slot_id)}{SLOT_NAME_SEPARATOR}{suffix}"
+
+
+def _plan_vertex_group_renames(mesh_obj, target_name_for_slot):
+    """Validate and build a vertex-group rename plan without mutating the mesh."""
+    target_to_group_index = {}
+    rename_plan = []
+    for vertex_group in mesh_obj.vertex_groups:
+        try:
+            slot_id = parse_slot_id_from_name(vertex_group.name)
+        except ValueError:
+            continue
+
+        target_name = target_name_for_slot(slot_id)
+        previous_group_index = target_to_group_index.get(target_name)
+        if previous_group_index is not None and previous_group_index != vertex_group.index:
+            raise ValueError(
+                f"{mesh_obj.name} has multiple vertex groups for slot {slot_id}; "
+                f"cannot rename both to {target_name}"
+            )
+
+        target_to_group_index[target_name] = vertex_group.index
+        existing_vertex_group = mesh_obj.vertex_groups.get(target_name)
+        if existing_vertex_group is not None and existing_vertex_group.index != vertex_group.index:
+            raise ValueError(
+                f"{mesh_obj.name} already has a vertex group named {target_name}; "
+                "remove the duplicate before renaming"
+            )
+
+        if vertex_group.name != target_name:
+            rename_plan.append((vertex_group, vertex_group.name, target_name))
+    return rename_plan
+
+
+def ensure_suffixed_numeric_vertex_groups(mesh_obj):
+    """Rename numeric vertex groups to '<slot>__<mesh name>' before proxy generation."""
+    suffix = build_slot_suffix_for_mesh(mesh_obj)
+    rename_plan = _plan_vertex_group_renames(
+        mesh_obj,
+        lambda slot_id: build_suffixed_slot_name(slot_id, suffix),
+    )
+    for vertex_group, _old_name, target_name in rename_plan:
+        vertex_group.name = target_name
+    return tuple((old_name, target_name) for _vertex_group, old_name, target_name in rename_plan)
+
+
+def restore_numeric_vertex_group_names(mesh_obj):
+    """Restore suffixed proxy vertex groups back to their numeric slot names."""
+    rename_plan = _plan_vertex_group_renames(mesh_obj, lambda slot_id: str(int(slot_id)))
+    for vertex_group, _old_name, target_name in rename_plan:
+        vertex_group.name = target_name
+    return tuple((old_name, target_name) for _vertex_group, old_name, target_name in rename_plan)
 
 
 def build_proxy_armature_name(mesh_obj):
@@ -242,10 +321,11 @@ def configure_proxy_pose_bones(proxy_armature):
     configured_bone_count = 0
     for pose_bone in proxy_armature.pose.bones:
         try:
-            slot_id = parse_slot_id_from_name(pose_bone.name)
+            slot_id, mesh_key = parse_slot_name_parts(pose_bone.name)
         except ValueError:
             continue
         pose_bone.bi_slot_id = slot_id
+        pose_bone.bi_mesh_key = mesh_key
         pose_bone.bi_export_enabled = True
         pose_bone.bi_is_proxy = True
         pose_bone.bi_bone_type = "MAIN"

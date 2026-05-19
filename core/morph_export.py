@@ -59,6 +59,10 @@ class MorphMeshExportResult:
     base_position_layout: str
     include_normals: bool
     include_tangents: bool
+    draw_hash: str = ""
+    match_index_count: int = 0
+    first_index: int = 0
+    part_id: int = -1
 
 
 def resolve_morph_export_paths(output_directory: str, clip_name: str, mesh_key: str):
@@ -918,6 +922,8 @@ def export_morph_mesh_for_proxy_armature(
     include_tangents=False,
     channel_mode=MORPH_CHANNEL_MODE_ANIMATED,
     write_metadata=True,
+    draw_part=None,
+    mesh_key=None,
 ):
     """Export one morph mesh payload for the proxy armature's source mesh."""
     if source_mesh is None or source_mesh.type != "MESH":
@@ -932,7 +938,7 @@ def export_morph_mesh_for_proxy_armature(
     if not exported_frames:
         return None
 
-    mesh_key = build_runtime_export_name_prefix(proxy_armature)
+    mesh_key = str(mesh_key or getattr(draw_part, "draw_key", "") or build_runtime_export_name_prefix(proxy_armature))
     original_frame = scene.frame_current
 
     with _preserve_shape_key_values(source_mesh) as baked_shape_key_values:
@@ -957,7 +963,19 @@ def export_morph_mesh_for_proxy_armature(
             with _evaluated_mesh_without_armature(source_mesh) as reference_mesh:
                 representative_loop_indices = _build_theherta_like_unique_loop_indices(reference_mesh)
 
-            base_position_resource = resolve_base_position_resource(output_directory, mesh_key)
+            explicit_base_position_path = str(getattr(draw_part, "base_position_path", "") or "")
+            explicit_base_position_stride = int(getattr(draw_part, "base_position_stride", 0) or 0)
+            if explicit_base_position_path:
+                resolved_explicit_path = bpy.path.abspath(explicit_base_position_path)
+                if not os.path.exists(resolved_explicit_path):
+                    raise ValueError(f"Base Position buffer does not exist: {resolved_explicit_path}")
+                base_position_resource = {
+                    "resource_name": f"ResourceBasePosition_{mesh_key}",
+                    "buffer_path": resolved_explicit_path,
+                    "stride": explicit_base_position_stride,
+                }
+            else:
+                base_position_resource = resolve_base_position_resource(output_directory, mesh_key)
             resolved_base_stride = int(base_position_resource["stride"])
             if resolved_base_stride <= 0:
                 base_buffer_size = os.path.getsize(base_position_resource["buffer_path"])
@@ -1056,6 +1074,12 @@ def export_morph_mesh_for_proxy_armature(
                 "clip_id": int(clip_id),
                 "mesh_key": mesh_key,
                 "armature_name": proxy_armature.name,
+                "draw_key": str(getattr(draw_part, "draw_key", mesh_key)),
+                "draw_object_name": str(getattr(getattr(draw_part, "source_object", None), "name", "")),
+                "hash": str(getattr(draw_part, "hash", "")),
+                "match_index_count": int(getattr(draw_part, "match_index_count", 0) or 0),
+                "first_index": int(getattr(draw_part, "first_index", 0) or 0),
+                "part_id": int(getattr(draw_part, "part_id", -1)),
                 "source_mesh_name": source_mesh.name,
                 "source_frame_start": int(frame_start),
                 "source_frame_end": int(frame_end),
@@ -1105,6 +1129,10 @@ def export_morph_mesh_for_proxy_armature(
                 base_position_layout="EFMI_PNTA40" if int(resolved_base_stride) >= 40 else "EFMI_PACKED16",
                 include_normals=bool(include_normals),
                 include_tangents=bool(resolved_include_tangents),
+                draw_hash=str(getattr(draw_part, "hash", "")),
+                match_index_count=int(getattr(draw_part, "match_index_count", 0) or 0),
+                first_index=int(getattr(draw_part, "first_index", 0) or 0),
+                part_id=int(getattr(draw_part, "part_id", -1)),
             )
         finally:
             scene.frame_set(original_frame)

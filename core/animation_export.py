@@ -108,6 +108,9 @@ def resolve_animation_loop_settings(exported_frames, default_loop_start, default
 
 def build_runtime_export_name_prefix(proxy_armature):
     """Use the first eight characters of the source object name as the runtime file prefix."""
+    draw_key = str(getattr(proxy_armature, "draw_key", "") or "").strip()
+    if draw_key:
+        return sanitize_export_name(draw_key, "draw_part")
     source_mesh_name = str(getattr(proxy_armature, "bi_source_mesh_name", "")).strip()
     candidate_name = source_mesh_name or str(proxy_armature.name)
     short_name = candidate_name[:8].strip()
@@ -180,9 +183,9 @@ def build_animation_static_uint4_rows(
             len(packed_slot_rows),
         ),
         (
-            int(getattr(proxy_armature, "bi_part_base", 0)),
-            int(getattr(proxy_armature, "bi_previous_offset", 0)),
-            int(getattr(proxy_armature, "bi_part_size", 0)),
+            int(getattr(proxy_armature, "part_base", getattr(proxy_armature, "bi_part_base", 0))),
+            int(getattr(proxy_armature, "previous_offset", getattr(proxy_armature, "bi_previous_offset", 0))),
+            int(getattr(proxy_armature, "part_size", getattr(proxy_armature, "bi_part_size", 0))),
             clip_fps,
         ),
         (
@@ -350,7 +353,7 @@ def prepare_animation_export_job(
     default_loop_end=-1,
     write_metadata=True,
 ):
-    """Resolve reusable export state for one proxy armature."""
+    """Resolve reusable export state for one runtime draw part."""
     exported_frames = normalize_animation_frame_range(frame_start, frame_end, frame_step)
     if not exported_frames:
         raise ValueError("No animation frames to export")
@@ -367,6 +370,7 @@ def prepare_animation_export_job(
         proxy_armature,
     )
     export_plan = build_runtime_export_plan(proxy_armature)
+    source_armature = getattr(proxy_armature, "proxy_armature", proxy_armature)
     correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
     extra_correction_matrix = build_extra_blender_correction_matrix(correction_mode)
     export_entries = tuple(
@@ -385,7 +389,8 @@ def prepare_animation_export_job(
     )
     slot_ids = tuple(int(export_entry["slot_id"]) for export_entry in export_entries)
     if not slot_ids:
-        raise ValueError(f"No exportable slots fit inside the configured part window for {proxy_armature.name}")
+        target_name = str(getattr(proxy_armature, "draw_key", getattr(source_armature, "name", "draw_part")))
+        raise ValueError(f"No exportable slots fit inside the configured part window for {target_name}")
 
     bone_count = len(export_entries)
     overflow_bones = list(export_plan["overflow_bone_names"])
@@ -409,13 +414,18 @@ def prepare_animation_export_job(
         "format": "rx_anim_clip_part_v1",
         "clip_name": normalized_clip_name,
         "clip_id": int(clip_id),
-        "armature_name": proxy_armature.name,
-        "source_mesh": getattr(proxy_armature, "bi_source_mesh_name", ""),
-        "part_id": int(getattr(proxy_armature, "bi_part_id", -1)),
-        "part_base": int(getattr(proxy_armature, "bi_part_base", 0)),
-        "part_size": int(getattr(proxy_armature, "bi_part_size", 0)),
+        "armature_name": source_armature.name,
+        "draw_key": str(getattr(proxy_armature, "draw_key", build_runtime_export_name_prefix(proxy_armature))),
+        "draw_object_name": str(getattr(getattr(proxy_armature, "source_object", None), "name", "")),
+        "source_mesh": str(getattr(getattr(proxy_armature, "source_object", None), "name", "")),
+        "hash": str(getattr(proxy_armature, "hash", "")),
+        "match_index_count": int(getattr(proxy_armature, "match_index_count", 0)),
+        "first_index": int(getattr(proxy_armature, "first_index", 0)),
+        "part_id": int(getattr(proxy_armature, "part_id", getattr(proxy_armature, "bi_part_id", -1))),
+        "part_base": int(getattr(proxy_armature, "part_base", getattr(proxy_armature, "bi_part_base", 0))),
+        "part_size": int(getattr(proxy_armature, "part_size", getattr(proxy_armature, "bi_part_size", 0))),
         "buffer_correction_mode": get_proxy_buffer_correction_mode(proxy_armature),
-        "previous_offset": int(getattr(proxy_armature, "bi_previous_offset", 0)),
+        "previous_offset": int(getattr(proxy_armature, "previous_offset", getattr(proxy_armature, "bi_previous_offset", 0))),
         "fps": float(fps),
         "frame_start": exported_frames[0],
         "frame_end": exported_frames[-1],
@@ -464,7 +474,8 @@ def prepare_animation_export_job(
     return {
         "clip_name": normalized_clip_name,
         "clip_id": int(clip_id),
-        "proxy_armature": proxy_armature,
+        "proxy_armature": source_armature,
+        "draw_part": proxy_armature,
         "export_entries": export_entries,
         "exported_frames": exported_frames,
         "slot_ids": slot_ids,

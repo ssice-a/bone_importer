@@ -100,6 +100,12 @@ def _append_clip_resource_sections(lines: list[str], export_results):
 def _append_morph_resource_sections(lines: list[str], morph_results):
     for morph_result in morph_results:
         mesh_key = morph_result.mesh_key
+        if str(morph_result.base_position_resource_name).startswith("ResourceBasePosition_"):
+            _write_line(lines, f"[{morph_result.base_position_resource_name}]")
+            _write_line(lines, "type = Buffer")
+            _write_line(lines, f"stride = {int(morph_result.base_position_stride)}")
+            _write_line(lines, f"filename = {morph_result.base_position_path}")
+            _write_line(lines)
         _write_line(lines, f"[ResourceMorphStatic_{mesh_key}]")
         _write_line(lines, "type = StructuredBuffer")
         _write_line(lines, "stride = 16")
@@ -125,12 +131,13 @@ def _append_morph_resource_sections(lines: list[str], morph_results):
 def _append_bone_texture_override(lines: list[str], export_result, cb1_override=CB1_OVERRIDE_NONE):
     mesh_key = _infer_mesh_key_from_clip_path(export_result.static_clip_path)
     part_id = int(export_result.metadata.get("part_id", -1))
-    inferred_match_index_count = _infer_match_index_count_from_source_mesh_name(export_result.metadata.get("source_mesh", ""))
+    hash_value = str(export_result.metadata.get("hash", "") or mesh_key)
+    inferred_match_index_count = int(export_result.metadata.get("match_index_count", 0) or 0)
     _write_line(lines, f"[TextureOverride_RX_{mesh_key}]")
     _write_line(lines, "; RX bone animation entry")
     _write_line(lines, f"; part_id = {part_id}")
-    _write_line(lines, f"hash = {mesh_key}")
-    if inferred_match_index_count is None:
+    _write_line(lines, f"hash = {hash_value}")
+    if inferred_match_index_count <= 0:
         _write_line(lines, "; match_index_count = ???")
     else:
         _write_line(lines, f"match_index_count = {inferred_match_index_count}")
@@ -155,7 +162,8 @@ def _append_bone_texture_override(lines: list[str], export_result, cb1_override=
 def _append_morph_texture_override(lines: list[str], export_result, morph_result, cb1_override=CB1_OVERRIDE_NONE):
     mesh_key = morph_result.mesh_key
     bundle = _build_position_resource_bundle(morph_result.base_position_resource_name)
-    inferred_match_index_count = _infer_match_index_count_from_source_mesh_name(export_result.metadata.get("source_mesh", ""))
+    hash_value = str(export_result.metadata.get("hash", "") or mesh_key)
+    inferred_match_index_count = int(export_result.metadata.get("match_index_count", 0) or 0)
     shader_name = (
         "CustomShader_ApplyMorph_PNTA40"
         if str(morph_result.base_position_layout) == "EFMI_PNTA40"
@@ -166,10 +174,10 @@ def _append_morph_texture_override(lines: list[str], export_result, morph_result
     _write_line(lines, f"[TextureOverride_RX_{mesh_key}]")
     _write_line(lines, "; RX bone + morph animation entry")
     _write_line(lines, f"; part_id = {part_id}")
-    _write_line(lines, f"hash = {mesh_key}")
+    _write_line(lines, f"hash = {hash_value}")
     if bundle is not None:
         _write_line(lines, f"match_index_count = {bundle['match_index_count']}")
-    elif inferred_match_index_count is not None:
+    elif inferred_match_index_count > 0:
         _write_line(lines, f"match_index_count = {inferred_match_index_count}")
     else:
         _write_line(lines, "; match_index_count = ???")
@@ -181,6 +189,8 @@ def _append_morph_texture_override(lines: list[str], export_result, morph_result
         _write_line(lines, f"    vb1 = ref {bundle['texcoord']}")
         _write_line(lines, f"    vb2 = ref {bundle['blend']}")
         _write_line(lines, f"    cs-t0 = {bundle['position']}")
+    elif morph_result.base_position_resource_name:
+        _write_line(lines, f"    cs-t0 = {morph_result.base_position_resource_name}")
     else:
         _write_line(lines, "    ; TODO: bind base Position/Texcoord/Blend/Index resources for this mesh.")
         _write_line(lines, "    ; cs-t0 = Resource_<hash>_<indexcount>_0_Position")
@@ -207,7 +217,7 @@ def _append_morph_texture_override(lines: list[str], export_result, morph_result
     _write_line(lines, "    vs-t0 = ResourceFakeT0_SRV")
     _write_line(lines, "    vs-cb1 = ResourceFakeCB1")
     resolved_draw_count = bundle["match_index_count"] if bundle is not None else inferred_match_index_count
-    if resolved_draw_count is not None:
+    if resolved_draw_count:
         _write_line(lines, f"    drawindexedinstanced = {resolved_draw_count},INSTANCE_COUNT,0,0,FIRST_INSTANCE")
     else:
         _write_line(lines, "    ; drawindexedinstanced = <match_index_count>,INSTANCE_COUNT,0,0,FIRST_INSTANCE")
@@ -218,6 +228,8 @@ def _append_morph_texture_override(lines: list[str], export_result, morph_result
 def _append_morph_only_texture_override(lines: list[str], morph_result):
     mesh_key = morph_result.mesh_key
     bundle = _build_position_resource_bundle(morph_result.base_position_resource_name)
+    hash_value = str(getattr(morph_result, "draw_hash", "") or mesh_key)
+    match_index_count = int(getattr(morph_result, "match_index_count", 0) or 0)
     shader_name = (
         "CustomShader_ApplyMorph_PNTA40"
         if str(morph_result.base_position_layout) == "EFMI_PNTA40"
@@ -227,9 +239,11 @@ def _append_morph_only_texture_override(lines: list[str], morph_result):
     _write_line(lines, f"[TextureOverride_RXMorph_{mesh_key}]")
     _write_line(lines, "; RX morph-only snippet")
     _write_line(lines, "; Merge this block into the matching bone TextureOverride if the draw also uses RX bone animation.")
-    _write_line(lines, f"hash = {mesh_key}")
+    _write_line(lines, f"hash = {hash_value}")
     if bundle is not None:
         _write_line(lines, f"match_index_count = {bundle['match_index_count']}")
+    elif match_index_count > 0:
+        _write_line(lines, f"match_index_count = {match_index_count}")
     else:
         _write_line(lines, "; match_index_count = ???")
     _write_line(lines, f"match_priority = {DEFAULT_REPLACEMENT_MATCH_PRIORITY}")
@@ -240,6 +254,8 @@ def _append_morph_only_texture_override(lines: list[str], morph_result):
         _write_line(lines, f"    vb1 = ref {bundle['texcoord']}")
         _write_line(lines, f"    vb2 = ref {bundle['blend']}")
         _write_line(lines, f"    cs-t0 = {bundle['position']}")
+    elif morph_result.base_position_resource_name:
+        _write_line(lines, f"    cs-t0 = {morph_result.base_position_resource_name}")
     else:
         _write_line(lines, "    ; TODO: bind base Position/Texcoord/Blend/Index resources for this mesh.")
         _write_line(lines, "    ; cs-t0 = Resource_<hash>_<indexcount>_0_Position")
@@ -267,6 +283,7 @@ def write_generated_runtime_ini(
     export_results,
     morph_results=(),
     cb1_override_by_mesh_key=None,
+    draw_parts=(),
 ):
     normalized_export_results = tuple(export_results)
     normalized_morph_results = tuple(morph_results)

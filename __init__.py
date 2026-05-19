@@ -17,6 +17,7 @@ from . import operators, panel, properties
 
 REGISTERED_CLASSES = (
     operators.BI_OT_generate_proxy_rig,
+    operators.BI_OT_restore_numeric_vertex_groups,
     operators.BI_OT_refresh_bind,
     operators.BI_OT_export_palette,
     operators.BI_OT_export_animation,

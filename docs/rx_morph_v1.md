@@ -2,6 +2,9 @@
 
 This document records the current `v1` implementation direction for shape-key export in `bone_importer`.
 
+> Cross-cutting runtime structure now lives in `docs/rx_runtime_data_model.md`.
+> This document remains the morph-specific detail document. If the two documents disagree, the runtime data model wins.
+
 ## Goals
 
 Morph export follows the same family as the RX bone-animation sidecars:

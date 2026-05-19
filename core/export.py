@@ -21,13 +21,16 @@ from .transform import convert_matrix_from_blender_to_game, get_proxy_buffer_cor
 _cached_previous_palette_segments = {}
 
 
-def list_exportable_proxy_pose_bones(proxy_armature):
+def list_exportable_proxy_pose_bones(proxy_armature, bone_namespace=""):
     """返回允许导出的代理 pose bone，并按槽位排序。"""
     exportable_bones = []
+    normalized_namespace = str(bone_namespace or "")
     for pose_bone in proxy_armature.pose.bones:
         if not getattr(pose_bone, "bi_export_enabled", False):
             continue
         if not getattr(pose_bone, "bi_is_proxy", False):
+            continue
+        if normalized_namespace and str(getattr(pose_bone, "bi_mesh_key", "")) != normalized_namespace:
             continue
         slot_id = int(getattr(pose_bone, "bi_slot_id", -1))
         if slot_id < 0:
@@ -38,6 +41,13 @@ def list_exportable_proxy_pose_bones(proxy_armature):
 
 def build_previous_palette_cache_key(proxy_armature):
     """构建上一帧缓存键，避免不同骨架互相污染。"""
+    if getattr(proxy_armature, "draw_key", ""):
+        return (
+            proxy_armature.draw_key,
+            int(getattr(proxy_armature, "part_base", 0)),
+            int(getattr(proxy_armature, "part_size", DEFAULT_PART_ROW_COUNT)),
+            int(getattr(proxy_armature, "previous_offset", DEFAULT_PREVIOUS_FRAME_ROW_OFFSET)),
+        )
     return (
         proxy_armature.name_full,
         int(getattr(proxy_armature, "bi_part_base", 0)),
@@ -48,10 +58,12 @@ def build_previous_palette_cache_key(proxy_armature):
 
 def validate_palette_window_settings(proxy_armature):
     """校验当前代理骨架的部位窗口设置。"""
-    part_base = int(getattr(proxy_armature, "bi_part_base", 0))
-    part_row_count = int(getattr(proxy_armature, "bi_part_size", DEFAULT_PART_ROW_COUNT))
-    previous_frame_row_offset = int(getattr(proxy_armature, "bi_previous_offset", DEFAULT_PREVIOUS_FRAME_ROW_OFFSET))
-    buffer_row_count = int(getattr(proxy_armature, "bi_buffer_size", DEFAULT_BUFFER_ROW_COUNT))
+    part_base = int(getattr(proxy_armature, "part_base", getattr(proxy_armature, "bi_part_base", 0)))
+    part_row_count = int(getattr(proxy_armature, "part_size", getattr(proxy_armature, "bi_part_size", DEFAULT_PART_ROW_COUNT)))
+    previous_frame_row_offset = int(
+        getattr(proxy_armature, "previous_offset", getattr(proxy_armature, "bi_previous_offset", DEFAULT_PREVIOUS_FRAME_ROW_OFFSET))
+    )
+    buffer_row_count = int(getattr(proxy_armature, "buffer_size", getattr(proxy_armature, "bi_buffer_size", DEFAULT_BUFFER_ROW_COUNT)))
 
     if part_row_count <= RESERVED_PALETTE_ROWS:
         raise ValueError("Part size must be larger than the reserved row count")
@@ -88,6 +100,8 @@ def resolve_bind_matrix_for_export(pose_bone, bind_fallback_bone_names):
 
 def build_current_palette_segment(proxy_armature, part_row_count):
     """为当前部位构建 current 段。"""
+    source_armature = getattr(proxy_armature, "proxy_armature", proxy_armature)
+    bone_namespace = str(getattr(proxy_armature, "bone_namespace", "") or "")
     current_palette_segment = build_empty_palette_segment(part_row_count)
     correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
     exported_bone_metadata = []
@@ -95,7 +109,7 @@ def build_current_palette_segment(proxy_armature, part_row_count):
     bind_fallback_bone_names = []
     used_slot_ids = []
 
-    for pose_bone in list_exportable_proxy_pose_bones(proxy_armature):
+    for pose_bone in list_exportable_proxy_pose_bones(source_armature, bone_namespace):
         slot_id = int(pose_bone.bi_slot_id)
         row_base = RESERVED_PALETTE_ROWS + slot_id * 3
         if row_base + 2 >= part_row_count:
@@ -127,6 +141,8 @@ def build_current_palette_segment(proxy_armature, part_row_count):
 
 def build_runtime_export_plan(proxy_armature):
     """Prepare reusable dense runtime-export data for one proxy armature."""
+    source_armature = getattr(proxy_armature, "proxy_armature", proxy_armature)
+    bone_namespace = str(getattr(proxy_armature, "bone_namespace", "") or "")
     layout_settings = validate_palette_window_settings(proxy_armature)
     runtime_entries = []
     exported_bone_metadata = []
@@ -135,7 +151,7 @@ def build_runtime_export_plan(proxy_armature):
     slot_count = 0
     correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
 
-    for pose_bone in list_exportable_proxy_pose_bones(proxy_armature):
+    for pose_bone in list_exportable_proxy_pose_bones(source_armature, bone_namespace):
         slot_id = int(pose_bone.bi_slot_id)
         row_base = RESERVED_PALETTE_ROWS + slot_id * 3
         if row_base + 2 >= layout_settings["part_row_count"]:
@@ -242,6 +258,8 @@ def build_palette_export_patch(proxy_armature):
     bpy.context.view_layer.update()
 
     layout_settings = validate_palette_window_settings(proxy_armature)
+    source_armature = getattr(proxy_armature, "proxy_armature", proxy_armature)
+    correction_mode = get_proxy_buffer_correction_mode(proxy_armature)
     current_palette_build = build_current_palette_segment(proxy_armature, layout_settings["part_row_count"])
     current_palette_segment = current_palette_build["current_palette_segment"]
     previous_palette_segment = resolve_previous_palette_segment(
@@ -251,14 +269,21 @@ def build_palette_export_patch(proxy_armature):
     )
 
     metadata = {
-        "part_id": int(getattr(proxy_armature, "bi_part_id", -1)),
+        "part_id": int(getattr(proxy_armature, "part_id", getattr(proxy_armature, "bi_part_id", -1))),
         "part_base": layout_settings["part_base"],
         "part_size": layout_settings["part_row_count"],
         "previous_base": layout_settings["previous_part_base"],
         "previous_offset": layout_settings["previous_frame_row_offset"],
         "buffer_correction_mode": correction_mode,
-        "armature_name": proxy_armature.name,
-        "source_mesh": getattr(proxy_armature, "bi_source_mesh_name", ""),
+        "armature_name": source_armature.name,
+        "draw_key": str(getattr(proxy_armature, "draw_key", "")),
+        "source_mesh": str(
+            getattr(
+                getattr(proxy_armature, "source_object", None),
+                "name",
+                getattr(proxy_armature, "bi_source_mesh_name", ""),
+            )
+        ),
         "exported_bones": current_palette_build["exported_bone_metadata"],
         "used_slots": sorted(set(current_palette_build["used_slot_ids"])),
         "overflow_bones": current_palette_build["overflow_bone_names"],
