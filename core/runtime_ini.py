@@ -480,25 +480,67 @@ StructuredBuffer<uint4> BoneStatic : register(t2);
 StructuredBuffer<uint4> MasterPlayback : register(t3);
 RWStructuredBuffer<float4> BonePalette : register(u0);
 
-float4 QuatNormalize(float4 q) { return normalize(q); }
+float4 QuatNormalize(float4 q)
+{
+    float q_len = length(q);
+    if (q_len <= 1e-8) return float4(0.0, 0.0, 0.0, 1.0);
+    return q / q_len;
+}
 
 float4 QuatNlerp(float4 a, float4 b, float t)
 {
     if (dot(a, b) < 0.0) b = -b;
-    return normalize(lerp(a, b, t));
+    return QuatNormalize(lerp(a, b, t));
 }
 
-float3x3 MatrixFromQuat(float4 q)
+void BuildPoseRows(float3 t, float4 q, out float4 row0, out float4 row1, out float4 row2)
 {
     float x = q.x, y = q.y, z = q.z, w = q.w;
     float xx = x * x, yy = y * y, zz = z * z;
     float xy = x * y, xz = x * z, yz = y * z;
     float wx = w * x, wy = w * y, wz = w * z;
-    return float3x3(
-        1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy),
-        2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx),
-        2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)
+    row0 = float4(1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy), t.x);
+    row1 = float4(2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx), t.y);
+    row2 = float4(2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy), t.z);
+}
+
+void MultiplyAffineRows(
+    float4 l0,
+    float4 l1,
+    float4 l2,
+    float4 r0,
+    float4 r1,
+    float4 r2,
+    out float4 o0,
+    out float4 o1,
+    out float4 o2
+)
+{
+    o0 = float4(
+        dot(l0.xyz, float3(r0.x, r1.x, r2.x)),
+        dot(l0.xyz, float3(r0.y, r1.y, r2.y)),
+        dot(l0.xyz, float3(r0.z, r1.z, r2.z)),
+        dot(l0.xyz, float3(r0.w, r1.w, r2.w)) + l0.w
     );
+    o1 = float4(
+        dot(l1.xyz, float3(r0.x, r1.x, r2.x)),
+        dot(l1.xyz, float3(r0.y, r1.y, r2.y)),
+        dot(l1.xyz, float3(r0.z, r1.z, r2.z)),
+        dot(l1.xyz, float3(r0.w, r1.w, r2.w)) + l1.w
+    );
+    o2 = float4(
+        dot(l2.xyz, float3(r0.x, r1.x, r2.x)),
+        dot(l2.xyz, float3(r0.y, r1.y, r2.y)),
+        dot(l2.xyz, float3(r0.z, r1.z, r2.z)),
+        dot(l2.xyz, float3(r0.w, r1.w, r2.w)) + l2.w
+    );
+}
+
+void ConvertSkinRowsFromBlenderToGame(float4 blender0, float4 blender1, float4 blender2, out float4 game0, out float4 game1, out float4 game2)
+{
+    game0 = blender0;
+    game1 = blender2;
+    game2 = -blender1;
 }
 
 uint LoadSlotId(uint bone_index)
@@ -543,19 +585,19 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     float3 t = lerp(ta, tb, alpha);
     float4 q = QuatNlerp(qa, qb, alpha);
 
-    float3x3 r = MatrixFromQuat(q);
     uint bind_row = bone_index * 3;
     float4 b0 = BoneBind[bind_row + 0];
     float4 b1 = BoneBind[bind_row + 1];
     float4 b2 = BoneBind[bind_row + 2];
 
-    float4 row0 = float4(r[0].x, r[0].y, r[0].z, t.x);
-    float4 row1 = float4(r[1].x, r[1].y, r[1].z, t.y);
-    float4 row2 = float4(r[2].x, r[2].y, r[2].z, t.z);
+    float4 pose0, pose1, pose2;
+    BuildPoseRows(t, q, pose0, pose1, pose2);
 
-    float4 out0 = float4(dot(row0, float4(b0.x, b1.x, b2.x, 0)), dot(row0, float4(b0.y, b1.y, b2.y, 0)), dot(row0, float4(b0.z, b1.z, b2.z, 0)), row0.w + b0.w);
-    float4 out1 = float4(dot(row1, float4(b0.x, b1.x, b2.x, 0)), dot(row1, float4(b0.y, b1.y, b2.y, 0)), dot(row1, float4(b0.z, b1.z, b2.z, 0)), row1.w + b1.w);
-    float4 out2 = float4(dot(row2, float4(b0.x, b1.x, b2.x, 0)), dot(row2, float4(b0.y, b1.y, b2.y, 0)), dot(row2, float4(b0.z, b1.z, b2.z, 0)), row2.w + b2.w);
+    float4 skin0, skin1, skin2;
+    MultiplyAffineRows(pose0, pose1, pose2, b0, b1, b2, skin0, skin1, skin2);
+
+    float4 out0, out1, out2;
+    ConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
 
     uint slot_id = LoadSlotId(bone_index);
     uint row_base = slot_id * 3;
@@ -569,10 +611,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     LoadPose(sample_b, bone_index, bone_count, tb, qb);
     t = lerp(ta, tb, alpha);
     q = QuatNlerp(qa, qb, alpha);
-    r = MatrixFromQuat(q);
-    BonePalette[previous_base + row_base + 0] = float4(r[0], t.x);
-    BonePalette[previous_base + row_base + 1] = float4(r[1], t.y);
-    BonePalette[previous_base + row_base + 2] = float4(r[2], t.z);
+    BuildPoseRows(t, q, pose0, pose1, pose2);
+    MultiplyAffineRows(pose0, pose1, pose2, b0, b1, b2, skin0, skin1, skin2);
+    ConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
+    BonePalette[previous_base + row_base + 0] = out0;
+    BonePalette[previous_base + row_base + 1] = out1;
+    BonePalette[previous_base + row_base + 2] = out2;
 }
 """,
     "redirect_cb1_local_palette_cs.hlsl": r"""RWStructuredBuffer<float4> FakeCB1 : register(u0);
