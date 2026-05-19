@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from .animation_export import normalize_clip_name, sanitize_export_name
+from .draw_part import DEFAULT_MATCH_PRIORITY
 from .manifest import load_export_manifest
 
 
@@ -48,6 +49,23 @@ def resolve_runtime_ini_path(output_directory: str, clip_name: str) -> str:
 def _append_constants(lines: list[str]):
     _line(lines, "[Constants]")
     _line(lines, "global persist $rx_anim_enable = 1")
+    _line(lines, "global persist $rx_anim_play = 1")
+    _line(lines, "global persist $rx_anim_control_token = 0")
+    _line(lines, "global persist $rx_anim_control_value = 0")
+    _line(lines, "global persist $rx_anim_speed = 1")
+    _line(lines, "global $rx_anim_seek_active = 0")
+    _line(lines, "global $rx_anim_seek_norm = 0.0")
+    _line(lines)
+    _line(lines, "[Present]")
+    _line(lines, "x = $rx_anim_play")
+    _line(lines, "y = $rx_anim_control_token")
+    _line(lines, "z = $rx_anim_control_value")
+    _line(lines, "w = $rx_anim_seek_active")
+    _line(lines, "x1 = $rx_anim_speed")
+    _line(lines, "y1 = $rx_anim_seek_norm")
+    _line(lines, "if $rx_anim_enable == 1")
+    _line(lines, "    run = CustomShader_UpdateMasterPlayback")
+    _line(lines, "endif")
     _line(lines)
 
 
@@ -76,6 +94,35 @@ def _append_global_resources(lines: list[str], manifest: dict, clip_name: str, o
     _line(lines, "format = R32_FLOAT")
     _line(lines, "; cb1[4].w bitfield value used by eyelash/eye VS branches")
     _line(lines, "data = 33.0")
+    _line(lines)
+    _line(lines, "[ResourceDumpedCB1_UAV]")
+    _line(lines, "type = RWStructuredBuffer")
+    _line(lines, "stride = 16")
+    _line(lines, "array = 4096")
+    _line(lines)
+    _line(lines, "[ResourceDumpedCB1_SRV]")
+    _line(lines, "type = Buffer")
+    _line(lines, "stride = 16")
+    _line(lines, "array = 4096")
+    _line(lines)
+    _line(lines, "[CustomShader_ExtractCB1]")
+    _line(lines, "vs = hlsl\\extract_cb1_vs.hlsl")
+    _line(lines, "ps = hlsl\\extract_cb1_ps.hlsl")
+    _line(lines, "ps-u7 = ResourceDumpedCB1_UAV")
+    _line(lines, "depth_enable = false")
+    _line(lines, "blend = ADD SRC_ALPHA INV_SRC_ALPHA")
+    _line(lines, "cull = none")
+    _line(lines, "topology = point_list")
+    _line(lines, "draw = 4096, 0")
+    _line(lines, "ps-u7 = null")
+    _line(lines, "ResourceDumpedCB1_SRV = copy ResourceDumpedCB1_UAV")
+    _line(lines)
+    _line(lines, "[CustomShader_UpdateMasterPlayback]")
+    _line(lines, "cs = hlsl\\update_master_playback_cs.hlsl")
+    _line(lines, "cs-u0 = ResourceMasterPlayback")
+    _line(lines, "dispatch = 1, 1, 1")
+    _line(lines, "cs-u0 = null")
+    _line(lines, "ResourceMasterPlayback_SRV = copy ResourceMasterPlayback")
     _line(lines)
     _line(lines, "[CustomShader_UpdateBonePaletteTQ]")
     _line(lines, "cs = hlsl\\update_bone_palette_tq_cs.hlsl")
@@ -125,12 +172,13 @@ def _append_bone_resources(lines: list[str], draw_key: str, payload: dict, outpu
     _line(lines, f"[ResourceFakeCB1_{key}_UAV]")
     _line(lines, "type = RWStructuredBuffer")
     _line(lines, "stride = 16")
-    _line(lines, "array = 32")
+    _line(lines, "array = 4096")
     _line(lines)
     _line(lines, f"[ResourceFakeCB1_{key}]")
     _line(lines, "type = Buffer")
     _line(lines, "stride = 16")
-    _line(lines, "array = 32")
+    _line(lines, "format = R32G32B32A32_UINT")
+    _line(lines, "array = 4096")
     _line(lines)
 
 
@@ -222,7 +270,7 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
     geometry_record = geometry_records[0] if geometry_records else None
     geometry_suffix = _geometry_resource_suffix(geometry_record or {}) if geometry_record is not None else ""
     geometry_vertex_buffers = dict((geometry_record or {}).get("vertex_buffers", {}) or {})
-    match_priority = int(draw_part.get("match_priority", 50) or 50)
+    match_priority = int(draw_part.get("match_priority", DEFAULT_MATCH_PRIORITY) or DEFAULT_MATCH_PRIORITY)
     _line(lines, f"[TextureOverride_RX_{key}]")
     _line(lines, "; RX manifest-driven animation entry")
     _line(lines, f"hash = {draw_part.get('hash', '')}")
@@ -250,6 +298,7 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, f"    ResourceMorphRuntimeVB_{key} = copy ResourceMorphRuntimeVB_{key}_UAV")
     if bone_payload is not None:
         bone_count = max(len(bone_payload.get("slot_ids", [])), 1)
+        _line(lines, "    run = CustomShader_ExtractCB1")
         _line(lines, f"    cs-t0 = ResourceBoneAnim_{key}")
         _line(lines, f"    cs-t1 = ResourceBoneBind_{key}")
         _line(lines, f"    cs-t2 = ResourceBoneStatic_{key}")
@@ -258,13 +307,15 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, "    run = CustomShader_UpdateBonePaletteTQ")
         _line(lines, f"    ResourceBonePalette_{key} = copy ResourceBonePalette_{key}_UAV")
         _line(lines, f"    cs-u0 = ResourceFakeCB1_{key}_UAV")
+        _line(lines, "    cs-t0 = ResourceDumpedCB1_SRV")
         _line(lines, f"    cs-t2 = ResourceBoneStatic_{key}")
         if str(draw_part.get("cb1_profile", "") or "").upper() == "EYELASH":
             _line(lines, "    cs-t3 = ResourceCB1Flag_Eyelash")
         else:
             _line(lines, "    cs-t3 = null")
-        _line(lines, "    dispatch = 32, 1, 1")
+        _line(lines, "    dispatch = 4, 1, 1")
         _line(lines, "    run = CustomShader_RedirectCB1LocalPalette")
+        _line(lines, "    cs-t0 = null")
         _line(lines, "    cs-t3 = null")
         _line(lines, f"    ResourceFakeCB1_{key} = copy ResourceFakeCB1_{key}_UAV")
         _line(lines, f"    vs-t0 = ResourceBonePalette_{key}")
@@ -284,7 +335,7 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
                 _line(lines, f"    vb3 = ResourceGeometry_{geometry_suffix}_vb0")
         index_buffer = dict(geometry_record.get("index_buffer", {}) or {})
         index_count = int(index_buffer.get("index_count", geometry_record.get("index_count", 0)) or 0)
-        _line(lines, f"    drawindexed = {index_count}, 0, 0")
+        _line(lines, f"    drawindexedinstanced = {index_count},INSTANCE_COUNT,0,0,FIRST_INSTANCE")
     elif morph_payload is not None:
         _line(lines, f"    vb0 = ref ResourceMorphRuntimeVB_{key}")
         _line(lines, f"    vb3 = ref ResourceMorphRuntimeVB_{key}")
@@ -319,6 +370,128 @@ def write_runtime_ini_from_manifest(output_directory: str, clip_name: str) -> st
 
 
 HLSL_FILES = {
+    "extract_cb1_vs.hlsl": r"""struct V2P
+{
+    float4 pos : SV_Position;
+    nointerpolation uint id : TEXCOORD0;
+    nointerpolation uint4 raw_bits : TEXCOORD1;
+};
+
+cbuffer CB1 : register(b1)
+{
+    float4 cb1_data[4096];
+};
+
+V2P main(uint id : SV_VertexID)
+{
+    V2P output;
+    float x = -0.98 + (id % 64) * 0.03;
+    float y = -0.98 + (id / 64) * 0.03;
+    output.pos = float4(x, y, 0.5, 1.0);
+    output.id = id;
+    output.raw_bits = asuint(cb1_data[id]);
+    return output;
+}
+""",
+    "extract_cb1_ps.hlsl": r"""struct V2P
+{
+    float4 pos : SV_Position;
+    nointerpolation uint id : TEXCOORD0;
+    nointerpolation uint4 raw_bits : TEXCOORD1;
+};
+
+RWStructuredBuffer<uint4> DumpedCB1 : register(u7);
+
+float4 main(V2P input) : SV_Target
+{
+    DumpedCB1[input.id] = input.raw_bits;
+    return float4(0.0, 0.0, 0.0, 0.0);
+}
+""",
+    "update_master_playback_cs.hlsl": r"""Texture1D<float4> IniParams : register(t120);
+RWStructuredBuffer<uint4> MasterPlayback : register(u0);
+
+static const uint RX_ANIM_FLAG_PLAYING = 1u;
+
+int RoundToInt(float value)
+{
+    return (value >= 0.0) ? (int)(value + 0.5) : (int)(value - 0.5);
+}
+
+[numthreads(1, 1, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    uint4 playback0 = MasterPlayback[0];
+    uint4 playback1 = MasterPlayback[1];
+    uint4 playback2 = MasterPlayback[2];
+    float4 control0 = IniParams[0];
+    float4 control1 = IniParams[1];
+
+    uint flags = playback0.x;
+    uint playback_tick = playback0.w;
+    uint ticks_per_sample = max(playback1.x, 1u);
+    uint loop_start = playback1.y;
+    uint loop_end = playback1.z;
+    uint last_control_token = playback2.y;
+
+    uint speed_override = (uint)max(control1.x, 0.0);
+    if (speed_override > 0u)
+    {
+        ticks_per_sample = speed_override;
+    }
+
+    uint requested_playing = (uint)max(control0.x, 0.0);
+    uint control_token = (uint)max(control0.y, 0.0);
+    int control_value = RoundToInt(control0.z);
+    uint seek_active = (uint)max(control0.w, 0.0);
+    float seek_norm = saturate(control1.y);
+
+    if (requested_playing != 0u)
+    {
+        flags |= RX_ANIM_FLAG_PLAYING;
+    }
+    else
+    {
+        flags &= ~RX_ANIM_FLAG_PLAYING;
+    }
+
+    uint loop_min = min(loop_start, loop_end);
+    uint loop_max = max(loop_start, loop_end);
+    uint loop_sample_count = max(loop_max - loop_min + 1u, 1u);
+    uint max_tick = (loop_sample_count > 1u) ? ((loop_sample_count - 1u) * ticks_per_sample) : 0u;
+
+    bool restarted = false;
+    if (control_token != last_control_token)
+    {
+        if (control_value != 0)
+        {
+            playback_tick = 0u;
+            restarted = true;
+        }
+        last_control_token = control_token;
+    }
+
+    if (seek_active != 0u)
+    {
+        playback_tick = (max_tick > 0u) ? (uint)RoundToInt(seek_norm * (float)max_tick) : 0u;
+    }
+    else if (!restarted && ((flags & RX_ANIM_FLAG_PLAYING) != 0u))
+    {
+        playback_tick += 1u;
+    }
+
+    uint current_tick = playback_tick;
+    uint previous_tick = current_tick;
+    if (seek_active == 0u && !restarted && ((flags & RX_ANIM_FLAG_PLAYING) != 0u))
+    {
+        previous_tick = (current_tick > 0u) ? (current_tick - 1u) : 0u;
+    }
+
+    MasterPlayback[0] = uint4(flags, previous_tick, current_tick, playback_tick);
+    MasterPlayback[1] = uint4(ticks_per_sample, loop_start, loop_end, playback1.w);
+    MasterPlayback[2] = uint4(seek_active, last_control_token, 0u, 0u);
+}
+""",
     "rx_anim_sampling.hlsli": r"""#ifndef RX_ANIM_SAMPLING_HLSLI
 #define RX_ANIM_SAMPLING_HLSLI
 
@@ -639,17 +812,18 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     BonePalette[previous_base + row_base + 2] = out2;
 }
 """,
-    "redirect_cb1_local_palette_cs.hlsl": r"""StructuredBuffer<uint4> BoneStatic : register(t2);
+    "redirect_cb1_local_palette_cs.hlsl": r"""StructuredBuffer<uint4> DumpedCB1 : register(t0);
+StructuredBuffer<uint4> BoneStatic : register(t2);
 Buffer<float> CB1FlagValue : register(t3);
 RWStructuredBuffer<uint4> FakeCB1 : register(u0);
 
-[numthreads(1, 1, 1)]
+[numthreads(1024, 1, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
     uint row_id = id.x;
-    if (row_id >= 32u) return;
+    if (row_id >= 4096u) return;
 
-    uint4 cb_data = uint4(0u, 0u, 0u, 0u);
+    uint4 cb_data = DumpedCB1[row_id];
     uint block_row = row_id & 15u;
 
     if (block_row == 4u)

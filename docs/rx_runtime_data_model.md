@@ -63,12 +63,12 @@ Required manifest fields:
   "hash": "c3806ef1",
   "match_index_count": 8322,
   "first_index": 0,
-  "match_priority": 50,
+  "match_priority": -1000,
   "cb1_profile": "NONE"
 }
 ```
 
-`draw_key` is the stable identity for resources and manifest entries. `part_id`, `part_base`, and global palette slice offsets are not part of the default design.
+`match_priority` defaults to `-1000` so the RX animation entry runs before later replacement/draw overrides. `draw_key` is the stable identity for resources and manifest entries. `part_id`, `part_base`, and global palette slice offsets are not part of the default design.
 
 ## Bone Payload
 
@@ -199,7 +199,7 @@ Example:
       "hash": "c3806ef1",
       "match_index_count": 8322,
       "first_index": 0,
-      "match_priority": 50,
+      "match_priority": -1000,
       "cb1_profile": "NONE"
     }
   },

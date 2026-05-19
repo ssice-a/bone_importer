@@ -322,7 +322,7 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
     for target_name, target in sorted(runtime_targets.items()):
         _link_object_once(runtime_collection, target)
         target.bi_bone_enabled = True
-        target.bi_match_priority = 50
+        target.bi_match_priority = -1000
 
         if target_name in REPLACEMENT_GEOMETRY:
             config = REPLACEMENT_GEOMETRY[target_name]

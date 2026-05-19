@@ -197,8 +197,8 @@ def register_addon_properties():
     )
     bpy.types.Object.bi_match_priority = bpy.props.IntProperty(
         name="Match Priority",
-        default=50,
-        description="TextureOverride match_priority emitted for this DrawPart.",
+        default=-1000,
+        description="TextureOverride match_priority emitted for this DrawPart. Negative values run before later replacement/draw overrides.",
     )
     bpy.types.Object.bi_bone_enabled = bpy.props.BoolProperty(
         name="Bone Payload",

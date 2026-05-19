@@ -13,7 +13,7 @@ _RESOURCE_POSITION_RE = re.compile(
     r"^(?P<prefix>Resource_(?P<hash>[0-9A-Fa-f]{8})_(?P<index_count>\d+)_\d+)_Position$"
 )
 _SOURCE_MESH_RE = re.compile(r"(?P<hash>[0-9A-Fa-f]{8})[-_](?P<index_count>\d+)(?:[-_]\d+)?")
-DEFAULT_REPLACEMENT_MATCH_PRIORITY = 50
+DEFAULT_REPLACEMENT_MATCH_PRIORITY = -1000
 
 
 def resolve_generated_ini_path(output_directory: str, clip_name: str) -> str:

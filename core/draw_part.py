@@ -17,6 +17,8 @@ DRAW_PART_NAME_RE = re.compile(
     r"^(?P<hash>[0-9A-Fa-f]{8})[-_](?P<index_count>\d+)(?:[-_](?P<first_index>\d+))?$"
 )
 
+DEFAULT_MATCH_PRIORITY = -1000
+
 
 @dataclass(frozen=True)
 class RuntimeDrawPart:
@@ -29,7 +31,7 @@ class RuntimeDrawPart:
     match_index_count: int
     first_index: int
     bone_namespace: str
-    match_priority: int = 50
+    match_priority: int = DEFAULT_MATCH_PRIORITY
     bone_enabled: bool = True
     bone_source_armature: bpy.types.Object | None = None
     bone_slot_map_json: str = ""
@@ -133,7 +135,7 @@ def _build_runtime_draw_part(obj, proxy_armature, _part_id: int, cb1_override: s
         match_index_count=match_index_count,
         first_index=first_index,
         bone_namespace=str(getattr(obj, "name", "")),
-        match_priority=int(getattr(obj, "bi_match_priority", 50) or 50),
+        match_priority=int(getattr(obj, "bi_match_priority", DEFAULT_MATCH_PRIORITY) or DEFAULT_MATCH_PRIORITY),
         bone_enabled=bool(getattr(obj, "bi_bone_enabled", True)),
         bone_source_armature=explicit_bone_source or proxy_armature,
         bone_slot_map_json=str(getattr(obj, "bi_bone_slot_map_json", "") or ""),
