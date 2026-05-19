@@ -216,7 +216,7 @@ def build_target_draw_parts(context) -> tuple[RuntimeDrawPart, ...]:
             return draw_parts
         raise ValueError(
             f"RX Export Collection '{export_collection.name}' has no draw-part objects "
-            "named '<hash>-<index_count>-<first_index>' with linked proxy armatures"
+            "named '<hash>-<index_count>-<first_index>'"
         )
 
     draw_parts = draw_parts_from_selected_objects(context)
@@ -236,7 +236,7 @@ def draw_part_manifest_rows(draw_parts) -> list[dict]:
         {
             "draw_key": draw_part.draw_key,
             "object_name": draw_part.source_object.name,
-            "proxy_armature": draw_part.proxy_armature.name,
+            "proxy_armature": draw_part.proxy_armature.name if draw_part.proxy_armature else "",
             "hash": draw_part.hash,
             "match_index_count": int(draw_part.match_index_count),
             "first_index": int(draw_part.first_index),

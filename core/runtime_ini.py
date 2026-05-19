@@ -107,7 +107,7 @@ def _append_morph_resources(lines: list[str], draw_key: str, payload: dict):
     base_resource = payload.get("base_position_resource_name", "") or f"ResourceBasePosition_{key}"
     if payload.get("base_position_path"):
         _line(lines, f"[{base_resource}]")
-        _line(lines, "type = Buffer")
+        _line(lines, "type = StructuredBuffer")
         _line(lines, f"stride = {int(payload.get('base_position_stride', 16) or 16)}")
         _line(lines, f"filename = {payload.get('base_position_path')}")
         _line(lines)
@@ -241,6 +241,151 @@ void ResolveTickToSampleWindow(uint tick, uint sample_count, uint ticks_per_samp
 
 #endif
 """,
+    "rx_anim_efmi_normal.hlsli": r"""#ifndef RX_ANIM_EFMI_NORMAL_HLSLI
+#define RX_ANIM_EFMI_NORMAL_HLSLI
+
+static const uint RX_MORPH_FLAG_HAS_POSITION_DELTAS = 1u;
+static const uint RX_MORPH_FLAG_HAS_NORMAL_TARGETS = 2u;
+static const uint RX_MORPH_FLAG_HAS_TANGENT_TARGETS = 4u;
+
+int DecodeSigned10(uint raw_value)
+{
+    uint value = raw_value & 0x3ffu;
+    return (value >= 512u) ? ((int)value - 1024) : (int)value;
+}
+
+float3 NormalizeOrFallback(float3 value, float3 fallback_value)
+{
+    float value_length = length(value);
+    return (value_length > 1e-8) ? (value / value_length) : fallback_value;
+}
+
+float3 DecodeEFMIPackedNormal(uint packed_normal)
+{
+    float encoded_x = (float)DecodeSigned10(packed_normal) / 511.0;
+    float encoded_y = (float)DecodeSigned10(packed_normal >> 10u) / 511.0;
+    float encoded_z = 1.0 - abs(encoded_x) - abs(encoded_y);
+    if (encoded_z < 0.0)
+    {
+        float old_x = encoded_x;
+        encoded_x = (1.0 - abs(encoded_y)) * ((old_x >= 0.0) ? 1.0 : -1.0);
+        encoded_y = (1.0 - abs(old_x)) * ((encoded_y >= 0.0) ? 1.0 : -1.0);
+    }
+    return NormalizeOrFallback(float3(encoded_x, encoded_y, encoded_z), float3(0.0, 0.0, 1.0));
+}
+
+float DecodeEFMIPackedTangentScalar(uint packed_normal)
+{
+    return clamp((float)DecodeSigned10(packed_normal >> 20u) / 511.0, -1.0, 1.0);
+}
+
+float DecodeEFMIPackedBitangentSign(uint packed_normal)
+{
+    return ((packed_normal >> 31u) & 1u) != 0u ? 1.0 : -1.0;
+}
+
+uint PackSigned10(float value)
+{
+    int signed_value = (int)round(clamp(value, -1.0, 1.0) * 511.0);
+    return ((uint)signed_value) & 0x3ffu;
+}
+
+uint EncodeEFMIPackedNormal(float3 normal_value, float tangent_scalar, float bitangent_sign)
+{
+    float3 normal = NormalizeOrFallback(normal_value, float3(0.0, 0.0, 1.0));
+    float l1_norm = abs(normal.x) + abs(normal.y) + abs(normal.z);
+    float encoded_x = 0.0;
+    float encoded_y = 0.0;
+    if (l1_norm > 1e-8)
+    {
+        float3 encoded = normal / l1_norm;
+        encoded_x = encoded.x;
+        encoded_y = encoded.y;
+        if (encoded.z < 0.0)
+        {
+            float old_x = encoded_x;
+            encoded_x = (1.0 - abs(encoded_y)) * ((old_x >= 0.0) ? 1.0 : -1.0);
+            encoded_y = (1.0 - abs(old_x)) * ((encoded_y >= 0.0) ? 1.0 : -1.0);
+        }
+    }
+
+    uint packed_x = PackSigned10(encoded_x);
+    uint packed_y = PackSigned10(encoded_y);
+    uint packed_tangent = PackSigned10(tangent_scalar);
+    uint packed_flag = 1u << 30u;
+    uint sign_flag = (bitangent_sign >= 0.0) ? (1u << 31u) : 0u;
+    return packed_x | (packed_y << 10u) | (packed_tangent << 20u) | packed_flag | sign_flag;
+}
+
+float2 UnpackHalf2(uint packed_value)
+{
+    return float2(
+        f16tof32(packed_value & 0xffffu),
+        f16tof32((packed_value >> 16u) & 0xffffu)
+    );
+}
+
+#endif
+""",
+    "rx_anim_morph_common.hlsli": r"""#ifndef RX_ANIM_MORPH_COMMON_HLSLI
+#define RX_ANIM_MORPH_COMMON_HLSLI
+
+uint RxReadUint4Component(uint4 row, uint component_index)
+{
+    if (component_index == 0u) return row.x;
+    if (component_index == 1u) return row.y;
+    if (component_index == 2u) return row.z;
+    return row.w;
+}
+
+uint RxMorphRowsPerSample(uint channel_count)
+{
+    uint weights_per_row = max(MorphAnim[0].w, 1u);
+    return max((max(channel_count, 1u) + weights_per_row - 1u) / weights_per_row, 1u);
+}
+
+float RxLoadMorphWeight(uint channel_index, uint sample_index)
+{
+    uint4 anim_header = MorphAnim[0];
+    uint channel_count = anim_header.x;
+    uint sample_count = max(anim_header.y, 1u);
+    uint weights_per_row = max(anim_header.w, 1u);
+    if (channel_index >= channel_count) return 0.0;
+
+    sample_index = min(sample_index, sample_count - 1u);
+    uint rows_per_sample = RxMorphRowsPerSample(channel_count);
+    uint row_index = 2u + sample_index * rows_per_sample + channel_index / weights_per_row;
+    uint packed_pair = RxReadUint4Component(MorphAnim[row_index], (channel_index % weights_per_row) / 2u);
+    uint half_bits = ((channel_index & 1u) == 0u) ? (packed_pair & 0xffffu) : ((packed_pair >> 16u) & 0xffffu);
+    return f16tof32(half_bits);
+}
+
+void RxResolveMorphSampleWindow(out uint sample_a, out uint sample_b, out float sample_alpha)
+{
+    uint sample_count = max(MorphAnim[0].y, 1u);
+    uint4 playback0 = MasterPlayback[0];
+    uint4 playback1 = MasterPlayback[1];
+    ResolveTickToSampleWindow(
+        playback0.z,
+        sample_count,
+        max(playback1.x, 1u),
+        playback1.y,
+        playback1.z,
+        sample_a,
+        sample_b,
+        sample_alpha
+    );
+}
+
+float RxSampleMorphWeight(uint channel_index, uint sample_a, uint sample_b, float sample_alpha)
+{
+    float weight_a = RxLoadMorphWeight(channel_index, sample_a);
+    float weight_b = RxLoadMorphWeight(channel_index, sample_b);
+    return lerp(weight_a, weight_b, sample_alpha);
+}
+
+#endif
+""",
     "update_bone_palette_tq_cs.hlsl": r"""#include "rx_anim_sampling.hlsli"
 
 StructuredBuffer<float4> BoneAnim : register(t0);
@@ -355,24 +500,172 @@ void main(uint3 id : SV_DispatchThreadID)
     FakeCB1[0] = float4(0, 0, 0, 0);
 }
 """,
-    "apply_morph_to_vb_cs.hlsl": r"""// Placeholder runtime morph shader generated by Bone Importer.
-// The project-specific build should replace this with the EFMI packed-normal implementation.
-StructuredBuffer<uint4> BaseVB : register(t0);
+    "apply_morph_to_vb_cs.hlsl": r"""#include "rx_anim_sampling.hlsli"
+#include "rx_anim_efmi_normal.hlsli"
+
+struct MorphVB16
+{
+    float3 position;
+    uint packed_normal;
+};
+
+StructuredBuffer<MorphVB16> BaseVB : register(t0);
 StructuredBuffer<uint4> MorphStatic : register(t1);
 StructuredBuffer<uint4> MorphAnim : register(t2);
 StructuredBuffer<uint4> MasterPlayback : register(t3);
-RWStructuredBuffer<uint4> RuntimeVB : register(u0);
+RWStructuredBuffer<MorphVB16> RuntimeVB : register(u0);
+
+#include "rx_anim_morph_common.hlsli"
 
 [numthreads(64, 1, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
     uint vertex_id = id.x;
-    uint vertex_count = MorphStatic[0].y;
+    uint4 static_header0 = MorphStatic[0];
+    uint4 static_header1 = MorphStatic[1];
+    uint vertex_count = static_header0.y;
     if (vertex_id >= vertex_count) return;
-    RuntimeVB[vertex_id] = BaseVB[vertex_id];
+
+    uint span_row_count = static_header1.z;
+    uint influence_row_stride = max(MorphStatic[2].y, 1u);
+    uint influence_base_row = 3u + span_row_count;
+    uint4 span = MorphStatic[3u + vertex_id];
+
+    MorphVB16 base_vertex = BaseVB[vertex_id];
+    MorphVB16 output_vertex = base_vertex;
+    float3 base_normal = DecodeEFMIPackedNormal(base_vertex.packed_normal);
+    float3 normal_acc = base_normal;
+    float base_tangent = DecodeEFMIPackedTangentScalar(base_vertex.packed_normal);
+    float tangent_acc = base_tangent;
+    float base_sign = DecodeEFMIPackedBitangentSign(base_vertex.packed_normal);
+    float sign_acc = base_sign;
+    bool has_normals = (static_header1.x & RX_MORPH_FLAG_HAS_NORMAL_TARGETS) != 0u;
+
+    uint sample_a;
+    uint sample_b;
+    float sample_alpha;
+    RxResolveMorphSampleWindow(sample_a, sample_b, sample_alpha);
+
+    for (uint local_index = 0u; local_index < span.y; ++local_index)
+    {
+        uint influence_index = span.x + local_index;
+        uint4 influence_row = MorphStatic[influence_base_row + influence_index * influence_row_stride];
+        uint channel_index = influence_row.x & 0xffffu;
+        float weight = RxSampleMorphWeight(channel_index, sample_a, sample_b, sample_alpha);
+        if (abs(weight) <= 1e-8) continue;
+
+        float2 delta_xy = UnpackHalf2(influence_row.y);
+        float2 delta_z0 = UnpackHalf2(influence_row.z);
+        output_vertex.position += weight * float3(delta_xy.x, delta_xy.y, delta_z0.x);
+
+        if (has_normals)
+        {
+            uint target_packed = influence_row.w;
+            float3 target_normal = DecodeEFMIPackedNormal(target_packed);
+            normal_acc += weight * (target_normal - base_normal);
+            tangent_acc += weight * (DecodeEFMIPackedTangentScalar(target_packed) - base_tangent);
+            sign_acc += weight * (DecodeEFMIPackedBitangentSign(target_packed) - base_sign);
+        }
+    }
+
+    if (has_normals)
+    {
+        output_vertex.packed_normal = EncodeEFMIPackedNormal(
+            NormalizeOrFallback(normal_acc, base_normal),
+            tangent_acc,
+            sign_acc >= 0.0 ? 1.0 : -1.0
+        );
+    }
+
+    RuntimeVB[vertex_id] = output_vertex;
 }
 """,
-    "apply_morph_to_vb_pnta40_cs.hlsl": r"""#include "apply_morph_to_vb_cs.hlsl"
+    "apply_morph_to_vb_pnta40_cs.hlsl": r"""#include "rx_anim_sampling.hlsli"
+#include "rx_anim_efmi_normal.hlsli"
+
+struct MorphVB40
+{
+    float3 position;
+    float3 normal;
+    float4 tangent;
+};
+
+StructuredBuffer<MorphVB40> BaseVB : register(t0);
+StructuredBuffer<uint4> MorphStatic : register(t1);
+StructuredBuffer<uint4> MorphAnim : register(t2);
+StructuredBuffer<uint4> MasterPlayback : register(t3);
+RWStructuredBuffer<MorphVB40> RuntimeVB : register(u0);
+
+#include "rx_anim_morph_common.hlsli"
+
+[numthreads(64, 1, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    uint vertex_id = id.x;
+    uint4 static_header0 = MorphStatic[0];
+    uint4 static_header1 = MorphStatic[1];
+    uint vertex_count = static_header0.y;
+    if (vertex_id >= vertex_count) return;
+
+    uint span_row_count = static_header1.z;
+    uint influence_row_stride = max(MorphStatic[2].y, 1u);
+    uint influence_base_row = 3u + span_row_count;
+    uint4 span = MorphStatic[3u + vertex_id];
+
+    MorphVB40 base_vertex = BaseVB[vertex_id];
+    MorphVB40 output_vertex = base_vertex;
+    float3 base_normal = NormalizeOrFallback(base_vertex.normal, float3(0.0, 0.0, 1.0));
+    float3 normal_acc = base_normal;
+    float4 tangent_acc = base_vertex.tangent;
+    bool has_normals = (static_header1.x & RX_MORPH_FLAG_HAS_NORMAL_TARGETS) != 0u;
+    bool has_tangents = ((static_header1.x & RX_MORPH_FLAG_HAS_TANGENT_TARGETS) != 0u) && influence_row_stride >= 2u;
+
+    uint sample_a;
+    uint sample_b;
+    float sample_alpha;
+    RxResolveMorphSampleWindow(sample_a, sample_b, sample_alpha);
+
+    for (uint local_index = 0u; local_index < span.y; ++local_index)
+    {
+        uint influence_index = span.x + local_index;
+        uint influence_row_index = influence_base_row + influence_index * influence_row_stride;
+        uint4 influence_row = MorphStatic[influence_row_index];
+        uint channel_index = influence_row.x & 0xffffu;
+        float weight = RxSampleMorphWeight(channel_index, sample_a, sample_b, sample_alpha);
+        if (abs(weight) <= 1e-8) continue;
+
+        float2 delta_xy = UnpackHalf2(influence_row.y);
+        float2 delta_z0 = UnpackHalf2(influence_row.z);
+        output_vertex.position += weight * float3(delta_xy.x, delta_xy.y, delta_z0.x);
+
+        if (has_normals)
+        {
+            float3 target_normal = DecodeEFMIPackedNormal(influence_row.w);
+            normal_acc += weight * (target_normal - base_normal);
+        }
+
+        if (has_tangents)
+        {
+            uint4 tangent_row = MorphStatic[influence_row_index + 1u];
+            float2 tangent_xy = UnpackHalf2(tangent_row.x);
+            float2 tangent_zw = UnpackHalf2(tangent_row.y);
+            float4 target_tangent = float4(tangent_xy.x, tangent_xy.y, tangent_zw.x, tangent_zw.y);
+            tangent_acc += weight * (target_tangent - base_vertex.tangent);
+        }
+    }
+
+    if (has_normals)
+    {
+        output_vertex.normal = NormalizeOrFallback(normal_acc, base_normal);
+    }
+    if (has_tangents)
+    {
+        output_vertex.tangent.xyz = NormalizeOrFallback(tangent_acc.xyz, base_vertex.tangent.xyz);
+        output_vertex.tangent.w = tangent_acc.w >= 0.0 ? 1.0 : -1.0;
+    }
+
+    RuntimeVB[vertex_id] = output_vertex;
+}
 """,
 }
 

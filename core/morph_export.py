@@ -806,10 +806,49 @@ def _sample_shape_key_weights(scene, source_mesh, channel_names, exported_frames
     if not channel_names:
         return sampled_weights
     key_blocks = source_mesh.data.shape_keys.key_blocks
+    shape_key_data = source_mesh.data.shape_keys
+    action = (
+        shape_key_data.animation_data.action
+        if shape_key_data is not None
+        and shape_key_data.animation_data is not None
+        and shape_key_data.animation_data.action is not None
+        else None
+    )
+    fcurve_by_channel = {}
+    if action is not None:
+        for fcurve in action.fcurves:
+            data_path = str(getattr(fcurve, "data_path", "") or "")
+            for channel_name in channel_names:
+                quoted_name = channel_name.replace("\\", "\\\\").replace("\"", "\\\"")
+                if data_path == f'key_blocks["{quoted_name}"].value':
+                    fcurve_by_channel[channel_name] = fcurve
+                    break
+
+    has_shape_key_drivers = bool(
+        shape_key_data is not None
+        and shape_key_data.animation_data is not None
+        and getattr(shape_key_data.animation_data, "drivers", None)
+    )
+    # Fast path: direct FCurve evaluation avoids thousands of scene.frame_set
+    # calls for long facial clips. Drivers still fall back to evaluated frames.
+    if not has_shape_key_drivers:
+        frame_array = np.asarray(exported_frames, dtype=np.float32)
+        for channel_index, channel_name in enumerate(channel_names):
+            fcurve = fcurve_by_channel.get(channel_name)
+            if fcurve is not None:
+                sampled_weights[:, channel_index] = [float(fcurve.evaluate(float(frame))) for frame in frame_array]
+            else:
+                sampled_weights[:, channel_index] = float(key_blocks[channel_name].value)
+        return sampled_weights
+
     for sample_index, frame_number in enumerate(exported_frames):
         scene.frame_set(frame_number)
         for channel_index, channel_name in enumerate(channel_names):
-            sampled_weights[sample_index, channel_index] = float(key_blocks[channel_name].value)
+            fcurve = fcurve_by_channel.get(channel_name)
+            if fcurve is not None:
+                sampled_weights[sample_index, channel_index] = float(fcurve.evaluate(float(frame_number)))
+            else:
+                sampled_weights[sample_index, channel_index] = float(key_blocks[channel_name].value)
     return sampled_weights
 
 
@@ -961,7 +1000,19 @@ def export_morph_mesh_for_proxy_armature(
             _set_shape_key_values(source_mesh, baked_shape_key_values)
             bpy.context.view_layer.update()
             with _evaluated_mesh_without_armature(source_mesh) as reference_mesh:
-                representative_loop_indices = _build_theherta_like_unique_loop_indices(reference_mesh)
+                source_loop_count = len(reference_mesh.loops)
+                source_representative_loop_indices = _build_theherta_like_unique_loop_indices(reference_mesh)
+
+            representative_loop_indices = source_representative_loop_indices
+            target_reference_object = getattr(draw_part, "source_object", None)
+            if (
+                target_reference_object is not None
+                and target_reference_object != source_mesh
+                and getattr(target_reference_object, "type", "") == "MESH"
+            ):
+                with _evaluated_mesh_without_armature(target_reference_object) as target_reference_mesh:
+                    if len(target_reference_mesh.loops) == source_loop_count:
+                        representative_loop_indices = _build_theherta_like_unique_loop_indices(target_reference_mesh)
 
             explicit_base_position_path = str(getattr(draw_part, "base_position_path", "") or "")
             explicit_base_position_stride = int(getattr(draw_part, "base_position_stride", 0) or 0)
