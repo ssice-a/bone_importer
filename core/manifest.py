@@ -29,7 +29,7 @@ def load_export_manifest(output_directory: str) -> dict:
             "geometry_exports": {},
             "payloads": {},
         }
-    with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+    with open(manifest_path, "r", encoding="utf-8-sig") as manifest_file:
         payload = json.load(manifest_file)
     payload["format"] = "rx_runtime_manifest_v2"
     payload.setdefault("clips", {})
