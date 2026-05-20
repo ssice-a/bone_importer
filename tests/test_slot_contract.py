@@ -144,7 +144,7 @@ class SlotContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.slot_contract = _load_slot_contract_module()
 
-    def test_mirrored_numeric_target_slots_bind_to_mirrored_source_slots(self):
+    def test_mirrored_numeric_target_slots_keep_runtime_slot_semantics(self):
         mesh = MeshObject("mesh", mirror_x=True)
         draw_part = DrawPart(mesh, Armature("arm", mesh.name))
 
@@ -152,7 +152,7 @@ class SlotContractTests(unittest.TestCase):
 
         self.assertEqual(
             [(binding.slot_id, binding.source_bone) for binding in bindings],
-            [(0, "1__mesh"), (1, "0__mesh"), (2, "2__mesh")],
+            [(0, "0__mesh"), (1, "1__mesh"), (2, "2__mesh")],
         )
 
     def test_non_mirrored_numeric_target_slots_keep_direct_bindings(self):

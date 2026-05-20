@@ -82,8 +82,8 @@ UV = flip V by default
 bitangent sign = flip when exactly one of mirror-X or flip-V is active
 skin matrix rows = YV row mapping:
     YV/EFMI axis conversion itself is not a mirror.
-    RX-imported geometry is mirrored on Blender X, but that belongs to slot
-    binding remap, not the palette row axis conversion.
+    RX-imported geometry mirror metadata belongs to geometry vector export.
+    It must not silently remap Bone Payload slot ids.
     game_row_0 =  blender_row_0
     game_row_1 =  blender_row_2
     game_row_2 = -blender_row_1
@@ -95,7 +95,17 @@ The Python truth source is:
 core/coordinate_contract.py
 ```
 
-Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, mirrored slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror, while the RX imported mesh mirror is a separate importer/exporter convention handled by the exporter when binding target slots to source proxy bones.
+Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror, and the RX imported mesh mirror is a vector-value conversion rather than a slot-identity conversion.
+
+Slot ids are governed by the Slot Contract:
+
+```text
+target slot 0 writes runtime palette slot 0
+target slot 1 writes runtime palette slot 1
+...
+```
+
+If a DrawPart really needs `slot 0` to sample a different source bone, that relationship must be written as an explicit Bone Slot Map JSON. The exporter must not infer left/right slot swaps from `bmc_mirror_flip`, centroids, object names, or mesh shape.
 
 ## Animation Bank Control
 

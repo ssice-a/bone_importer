@@ -78,9 +78,10 @@ def yv_axis_skin_rows(
 ) -> tuple[tuple[float, float, float, float], ...]:
     """Convert Blender-space skin rows to the RX runtime palette basis.
 
-    YV/EFMI axis conversion itself is not a mirror. Mirrored importer slot
-    layout is handled by slot binding remap in ``core.slot_contract``; the
-    palette shader only performs the YV row mapping:
+    YV/EFMI axis conversion itself is not a mirror. Mirror metadata may affect
+    exported geometry vector values, but it must not silently remap Bone Payload
+    slot ids. Non-identity slot binding belongs to an explicit Bone Slot Map;
+    the palette shader only performs the YV row mapping:
 
     ``game_row_0 =  blender_row_0``
     ``game_row_1 =  blender_row_2``
@@ -116,8 +117,9 @@ RX_RUNTIME_COORDINATE_CONTRACT_HLSLI = r"""#ifndef RX_ANIM_COORDINATE_CONTRACT_H
 #define RX_ANIM_COORDINATE_CONTRACT_HLSLI
 
 // Runtime Coordinate Contract: RX_RUNTIME_YV_AXIS.
-// YV/EFMI axis conversion itself is not a mirror. Mirrored imported slot
-// layouts are handled by slot binding remap in the exporter; the game VS
+// YV/EFMI axis conversion itself is not a mirror. Mirror metadata may affect
+// exported geometry vector values, but Bone Payload slot ids remain runtime
+// namespace ids unless the user provides an explicit Bone Slot Map. The game VS
 // consumes palette rows like the YV reference shader:
 //     game_row_0 =  blender_row_0
 //     game_row_1 =  blender_row_2

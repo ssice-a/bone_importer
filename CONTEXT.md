@@ -32,6 +32,10 @@ _Avoid_: mesh export, model export
 The shared Blender-to-game coordinate rules that must be used by replacement geometry export, Bone Payload runtime HLSL, and Morph Payload runtime HLSL for the same DrawPart.
 _Avoid_: local mirror fix, one-off axis conversion
 
+**Slot Contract**:
+The DrawPart-local runtime slot namespace that decides which source bone writes each game palette slot. Coordinate mirror flags do not alter slot ids; non-identity slot binding must be authored as an explicit Bone Slot Map.
+_Avoid_: inferred mirror slot swap, centroid-based slot guess
+
 **Runtime Manifest**:
 The persistent relationship map between an Animation Bank, its Clips, DrawParts, DrawPart-local Bone Payloads, and DrawPart-local Morph Payloads.
 _Avoid_: generated ini, clip manifest
@@ -57,6 +61,7 @@ _Avoid_: shape-key mesh export
 - A **DrawPart** may have zero or one **Morph Payload** for the **Animation Bank**.
 - A **Runtime Manifest** records many **DrawParts** under one **Animation Bank**.
 - A **Runtime Coordinate Contract** must be shared by every runtime payload and any replacement geometry bound to the same **DrawPart**.
+- A **Slot Contract** is separate from the **Runtime Coordinate Contract**: geometry mirror changes coordinates, not bone slot identity.
 - A **Replacement Skinned Model** is exported by an external model tool, not by Bone Importer.
 - A **Morph Payload** may coexist with a **DrawPart Bone Pool**, but does not depend on one.
 
