@@ -25,8 +25,11 @@ BMC_CAPTURE_MANIFEST_CANDIDATES = (
     r"E:\XXMI\EFMI\Mods\lev\capture_manifest.json",
     r"E:\XXMI\EFMI\Mods\lxi\capture_manifest.json",
 )
-DEFAULT_FRAME_START = 0
-DEFAULT_FRAME_END = 5670
+# The RX validation scene's baked BoneX action is authored on 1..1680.
+# Keep these scene-specific defaults out of the stale 0..5670 source action
+# range; callers can still override them with RX_EXPORT_FRAME_*.
+DEFAULT_FRAME_START = 1
+DEFAULT_FRAME_END = 1680
 DEFAULT_FRAME_STEP = 1
 
 SOURCE_COLLECTION_NAME = "BMC Export Sources"
