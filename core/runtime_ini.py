@@ -1046,6 +1046,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     uint bone_count = header0.x;
     uint sample_count = header0.y;
     uint reserved_rows = header0.z;
+    uint payload_flags = header1.z;
     if (bone_index >= bone_count) return;
 
     uint4 playback0 = MasterPlayback[0];
@@ -1079,7 +1080,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     MultiplyAffineRows(pose0, pose1, pose2, b0, b1, b2, skin0, skin1, skin2);
 
     float4 out0, out1, out2;
-    RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
+    RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, payload_flags, out0, out1, out2);
 
     uint slot_id = LoadSlotId(bone_index);
     uint row_base = reserved_rows + slot_id * 3;
@@ -1109,7 +1110,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     q = QuatNlerp(qa, qb, alpha);
     BuildPoseRows(t, q, pose0, pose1, pose2);
     MultiplyAffineRows(pose0, pose1, pose2, b0, b1, b2, skin0, skin1, skin2);
-    RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
+    RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, payload_flags, out0, out1, out2);
     BonePalette[previous_base + row_base + 0] = out0;
     BonePalette[previous_base + row_base + 1] = out1;
     BonePalette[previous_base + row_base + 2] = out2;

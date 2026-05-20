@@ -34,10 +34,12 @@ class RuntimeIniDispatchTests(unittest.TestCase):
 
         self.assertIn('"rx_anim_coordinate_contract.hlsli": hlsl_coordinate_contract()', runtime_source)
         self.assertIn('#include "rx_anim_coordinate_contract.hlsli"', runtime_source)
-        self.assertIn("RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);", runtime_source)
+        self.assertIn("uint payload_flags = header1.z;", runtime_source)
+        self.assertIn("RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, payload_flags, out0, out1, out2);", runtime_source)
         self.assertNotIn("void ConvertSkinRowsFromBlenderToGame", runtime_source)
 
         self.assertIn("RX_RUNTIME_YV_AXIS", contract_source)
+        self.assertIn("RX_BONE_PAYLOAD_FLAG_MIRROR_X", contract_source)
         self.assertIn("game_row_0 =  blender_row_0", contract_source)
         self.assertIn("game0 = blender0;", contract_source)
         self.assertIn("game1 = blender2;", contract_source)

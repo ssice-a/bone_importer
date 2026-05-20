@@ -59,11 +59,47 @@ class CoordinateContractTests(unittest.TestCase):
             ),
         )
 
+    def test_mirror_x_skin_rows_conjugates_affine_matrix_without_slot_remap(self):
+        rows = coordinate_contract.mirror_x_skin_rows(
+            (1.0, 2.0, 3.0, 4.0),
+            (5.0, 6.0, 7.0, 8.0),
+            (9.0, 10.0, 11.0, 12.0),
+        )
+
+        self.assertEqual(
+            rows,
+            (
+                (1.0, -2.0, -3.0, -4.0),
+                (-5.0, 6.0, 7.0, 8.0),
+                (-9.0, 10.0, 11.0, 12.0),
+            ),
+        )
+
+    def test_yv_axis_skin_rows_can_apply_mirror_x_before_axis_mapping(self):
+        rows = coordinate_contract.yv_axis_skin_rows(
+            (1.0, 2.0, 3.0, 4.0),
+            (5.0, 6.0, 7.0, 8.0),
+            (9.0, 10.0, 11.0, 12.0),
+            mirror_x=True,
+        )
+
+        self.assertEqual(
+            rows,
+            (
+                (1.0, -2.0, -3.0, -4.0),
+                (-9.0, 10.0, 11.0, 12.0),
+                (5.0, -6.0, -7.0, -8.0),
+            ),
+        )
+
     def test_hlsl_contract_contains_same_yv_axis_row_mapping(self):
         hlsl = coordinate_contract.hlsl_coordinate_contract()
 
         self.assertIn("RX_RUNTIME_YV_AXIS", hlsl)
+        self.assertIn("RX_BONE_PAYLOAD_FLAG_MIRROR_X", hlsl)
+        self.assertIn("RxMirrorSkinRowsOnX", hlsl)
         self.assertIn("game_row_0 =  blender_row_0", hlsl)
+        self.assertIn("uint payload_flags", hlsl)
         self.assertIn("game0 = blender0;", hlsl)
         self.assertIn("game1 = blender2;", hlsl)
         self.assertIn("game2 = -blender1;", hlsl)

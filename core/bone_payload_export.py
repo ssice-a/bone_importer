@@ -26,6 +26,7 @@ from .animation_export import (
 )
 from .models import AnimationExportResult
 from .slot_contract import resolve_bone_slot_bindings, serialize_slot_bindings
+from .coordinate_contract import RX_BONE_PAYLOAD_FLAG_MIRROR_X, resolve_object_mirror_x
 from .transform import BUFFER_CORRECTION_NONE, build_extra_blender_correction_matrix, get_proxy_buffer_correction_mode
 from .layout import build_matrix_from_flat_values, convert_matrix_to_palette_rows
 
@@ -56,7 +57,7 @@ def _pack_slot_ids_uint4(slot_ids: tuple[int, ...]) -> list[tuple[int, int, int,
     return rows
 
 
-def build_bone_static_uint4_rows(slot_ids: tuple[int, ...], sample_count: int):
+def build_bone_static_uint4_rows(slot_ids: tuple[int, ...], sample_count: int, flags: int = BONE_PAYLOAD_FLAGS_NONE):
     """Build the fixed Bone Payload static table."""
     normalized_slot_ids = tuple(sorted(int(slot_id) for slot_id in slot_ids))
     slot_rows = _pack_slot_ids_uint4(normalized_slot_ids)
@@ -72,11 +73,18 @@ def build_bone_static_uint4_rows(slot_ids: tuple[int, ...], sample_count: int):
         (
             int(palette_row_count),
             int(previous_palette_base),
-            int(BONE_PAYLOAD_FLAGS_NONE),
+            int(flags),
             0,
         ),
         *slot_rows,
     ]
+
+
+def _bone_payload_flags(draw_part) -> int:
+    flags = int(BONE_PAYLOAD_FLAGS_NONE)
+    if resolve_object_mirror_x(getattr(draw_part, "source_object", None), None):
+        flags |= int(RX_BONE_PAYLOAD_FLAG_MIRROR_X)
+    return flags
 
 
 def _resolve_bind_matrix(pose_bone):
@@ -154,6 +162,7 @@ def _build_bone_payload_metadata(
     bone_anim_path,
     bone_bind_path,
     correction_mode,
+    payload_flags,
 ):
     return {
         "format": "rx_bone_payload_v1",
@@ -193,8 +202,10 @@ def _build_bone_payload_metadata(
         "bind_path": bone_bind_path,
         "static_clip_path": bone_static_path,
         "buffer_correction_mode": correction_mode,
+        "bone_payload_flags": int(payload_flags),
+        "mirror_x_skin_rows": bool(int(payload_flags) & int(RX_BONE_PAYLOAD_FLAG_MIRROR_X)),
         "coordinate_space": "blender_armature_space",
-        "coordinate_correction_runtime": "baked_in_export_tq",
+        "coordinate_correction_runtime": "bone_payload_flags_then_yv_axis",
     }
 
 
@@ -279,6 +290,7 @@ def export_bone_payload_for_draw_part(
     binding_pose_bones = tuple(_iter_binding_pose_bones(bindings))
     slot_ids = tuple(binding.slot_id for binding, _pose_bone in binding_pose_bones)
     correction_mode, correction_matrix = _binding_correction_matrix(draw_part)
+    payload_flags = _bone_payload_flags(draw_part)
     frame_buffer = array("f", [0.0]) * (len(binding_pose_bones) * TQ_FLOATS_PER_BONE)
 
     scene = context.scene
@@ -292,7 +304,7 @@ def export_bone_payload_for_draw_part(
         scene.frame_set(original_frame)
 
     _write_bone_bind_buffer(bone_bind_path, binding_pose_bones)
-    write_uint4_buffer_rows(bone_static_path, build_bone_static_uint4_rows(slot_ids, len(exported_frames)))
+    write_uint4_buffer_rows(bone_static_path, build_bone_static_uint4_rows(slot_ids, len(exported_frames), payload_flags))
 
     metadata = _build_bone_payload_metadata(
         draw_part,
@@ -308,6 +320,7 @@ def export_bone_payload_for_draw_part(
         bone_anim_path,
         bone_bind_path,
         correction_mode,
+        payload_flags,
     )
     if write_metadata:
         write_json_file(bone_metadata_path, metadata)
@@ -752,6 +765,7 @@ def export_bone_payloads_for_draw_parts(
             binding_pose_bones = tuple(_iter_binding_pose_bones(bindings))
             slot_ids = tuple(binding.slot_id for binding, _pose_bone in binding_pose_bones)
             correction_mode, correction_matrix = _binding_correction_matrix(draw_part)
+            payload_flags = _bone_payload_flags(draw_part)
             prepared_payloads.append(
                 {
                     "draw_part": draw_part,
@@ -760,6 +774,7 @@ def export_bone_payloads_for_draw_parts(
                     "slot_ids": slot_ids,
                     "correction_mode": correction_mode,
                     "correction_matrix": correction_matrix,
+                    "payload_flags": payload_flags,
                     "bone_static_path": bone_static_path,
                     "bone_anim_path": bone_anim_path,
                     "bone_bind_path": bone_bind_path,
@@ -903,7 +918,7 @@ def export_bone_payloads_for_draw_parts(
             static_start = perf_counter()
             write_uint4_buffer_rows(
                 payload["bone_static_path"],
-                build_bone_static_uint4_rows(payload["slot_ids"], len(exported_frames)),
+                build_bone_static_uint4_rows(payload["slot_ids"], len(exported_frames), payload["payload_flags"]),
             )
             payload_timing["static_write_seconds"] = perf_counter() - static_start
             metadata = _build_bone_payload_metadata(
@@ -920,6 +935,7 @@ def export_bone_payloads_for_draw_parts(
                 payload["bone_anim_path"],
                 payload["bone_bind_path"],
                 payload["correction_mode"],
+                payload["payload_flags"],
             )
             metadata["sampling_cache"] = {
                 "mode": "shared_pose_tq_by_correction_mode",

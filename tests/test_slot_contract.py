@@ -161,7 +161,7 @@ class SlotContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.slot_contract = _load_slot_contract_module()
 
-    def test_mirrored_numeric_target_slots_sample_mirrored_source_side(self):
+    def test_mirrored_numeric_target_slots_keep_direct_slot_bindings(self):
         mesh = MeshObject("mesh", mirror_x=True)
         draw_part = DrawPart(mesh, Armature("arm", mesh.name))
 
@@ -169,7 +169,7 @@ class SlotContractTests(unittest.TestCase):
 
         self.assertEqual(
             [(binding.slot_id, binding.source_bone) for binding in bindings],
-            [(0, "1__mesh"), (1, "0__mesh"), (2, "2__mesh")],
+            [(0, "0__mesh"), (1, "1__mesh"), (2, "2__mesh")],
         )
 
     def test_non_mirrored_numeric_target_slots_keep_direct_bindings(self):
@@ -181,26 +181,6 @@ class SlotContractTests(unittest.TestCase):
         self.assertEqual(
             [(binding.slot_id, binding.source_bone) for binding in bindings],
             [(0, "0__mesh"), (1, "1__mesh"), (2, "2__mesh")],
-        )
-
-    def test_mirror_adapter_prefers_source_bone_positions_over_weight_centroids(self):
-        mesh = MeshObject("mesh", mirror_x=True)
-        armature = Armature(
-            "arm",
-            mesh.name,
-            head_positions={
-                0: (-1.0, 0.0, 0.0),
-                1: (0.0, 0.0, 0.0),
-                2: (1.0, 0.0, 0.0),
-            },
-        )
-        draw_part = DrawPart(mesh, armature)
-
-        bindings = self.slot_contract.resolve_bone_slot_bindings(draw_part)
-
-        self.assertEqual(
-            [(binding.slot_id, binding.source_bone) for binding in bindings],
-            [(0, "2__mesh"), (1, "1__mesh"), (2, "0__mesh")],
         )
 
     def test_explicit_slot_map_is_not_mirrored(self):

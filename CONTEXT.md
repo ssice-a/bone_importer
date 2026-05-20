@@ -35,7 +35,7 @@ _Avoid_: local mirror fix, one-off axis conversion
 UV mirroring belongs to this contract too. U mirroring is explicit metadata for replacement geometry; it is not inferred from X-axis mesh mirroring because imported game meshes must round-trip without changing UV identity.
 
 **Slot Contract**:
-The DrawPart-local runtime slot namespace that decides which source bone writes each game palette slot. Runtime slot ids still write their own palette rows, but BMC-imported mirrored meshes need an import-space adapter from target numeric slot to mirrored Blender source bone. Explicit Bone Slot Map entries always override this automatic adapter.
+The DrawPart-local runtime slot namespace that decides which source bone writes each game palette slot. Runtime slot ids always keep their numeric meaning; BMC-imported mirror metadata is handled by the Runtime Coordinate Contract, not by automatic source-bone matching. Explicit Bone Slot Map entries are the only supported way to make a non-identity source binding.
 _Avoid_: global slot namespace, hidden cross-DrawPart slot sharing
 
 **Runtime Manifest**:
@@ -63,7 +63,7 @@ _Avoid_: shape-key mesh export
 - A **DrawPart** may have zero or one **Morph Payload** for the **Animation Bank**.
 - A **Runtime Manifest** records many **DrawParts** under one **Animation Bank**.
 - A **Runtime Coordinate Contract** must be shared by every runtime payload and any replacement geometry bound to the same **DrawPart**.
-- A **Slot Contract** is separate from the **Runtime Coordinate Contract**: geometry mirror changes vector values, while the Slot Contract may adapt imported mirrored source bones back to runtime slot ids.
+- A **Slot Contract** is separate from the **Runtime Coordinate Contract**: geometry mirror changes vector values and final skin rows, while slot ids remain semantic ids.
 - A **Replacement Skinned Model** is exported by an external model tool, not by Bone Importer.
 - A **Morph Payload** may coexist with a **DrawPart Bone Pool**, but does not depend on one.
 

@@ -40,6 +40,13 @@ class BonePayloadLayoutTests(unittest.TestCase):
         self.assertEqual(rows[1], (12, 12, 0, 0))
         self.assertEqual(rows[2], (0, 2, 0xFFFFFFFF, 0xFFFFFFFF))
 
+    def test_bone_static_stores_payload_flags(self):
+        build_bone_static_uint4_rows = _load_static_row_builder()
+
+        rows = build_bone_static_uint4_rows((0,), sample_count=5, flags=1)
+
+        self.assertEqual(rows[1], (6, 6, 1, 0))
+
     def test_static_bonex_driver_world_pin_is_muted_during_sampling(self):
         is_static_bonex_driver, _iter_static_bonex_driver_constraints = _load_bonex_driver_helpers()
         target = SimpleNamespace(name="bonex_driver_deadbeef", parent=None, animation_data=None, constraints=[])
