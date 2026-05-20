@@ -58,6 +58,7 @@ def prepare_geometry_export_collection(
         export_plan.parts,
         dict(capture_manifest.get("vertex_layout_table", {}) or {}),
         mirror_flip_default=bool(getattr(context.scene, "bmc_mirror_flip", True)),
+        uv_mirror_u_default=bool(getattr(context.scene, "bmc_uv_mirror_u", False)),
         uv_flip_v_default=bool(getattr(context.scene, "bmc_uv_flip_v", True)),
     )
     timings["geometry"] = time.perf_counter() - stage_start
@@ -90,6 +91,7 @@ def prepare_geometry_export_collection(
         "geometry_buffers": _public_geometry_records(geometry_records),
         "export_options": {
             "mirror_flip": bool(getattr(context.scene, "bmc_mirror_flip", True)),
+            "uv_mirror_u": bool(getattr(context.scene, "bmc_uv_mirror_u", False)),
             "uv_flip_v": bool(getattr(context.scene, "bmc_uv_flip_v", True)),
             "max_bones_per_part": int(max_bones_per_part),
         },

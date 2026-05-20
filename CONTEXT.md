@@ -32,6 +32,8 @@ _Avoid_: mesh export, model export
 The shared Blender-to-game coordinate rules that must be used by replacement geometry export, Bone Payload runtime HLSL, and Morph Payload runtime HLSL for the same DrawPart.
 _Avoid_: local mirror fix, one-off axis conversion
 
+UV mirroring belongs to this contract too. U mirroring is explicit metadata for replacement geometry; it is not inferred from X-axis mesh mirroring because imported game meshes must round-trip without changing UV identity.
+
 **Slot Contract**:
 The DrawPart-local runtime slot namespace that decides which source bone writes each game palette slot. Coordinate mirror flags do not alter slot ids; non-identity slot binding must be authored as an explicit Bone Slot Map.
 _Avoid_: inferred mirror slot swap, centroid-based slot guess

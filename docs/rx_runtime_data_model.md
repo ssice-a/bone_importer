@@ -78,6 +78,7 @@ Current RX contract:
 ```text
 name = RX_RUNTIME_YV_AXIS
 position / normal / tangent = mirror Blender X into game X
+UV = mirror U only when the DrawPart explicitly opts in
 UV = flip V by default
 bitangent sign = flip when exactly one of mirror-X or flip-V is active
 skin matrix rows = YV row mapping:
@@ -95,7 +96,16 @@ The Python truth source is:
 core/coordinate_contract.py
 ```
 
-Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror, and the RX imported mesh mirror is a vector-value conversion rather than a slot-identity conversion.
+Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, UV mirroring/flipping, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror, and the RX imported mesh mirror is a vector-value conversion rather than a slot-identity conversion.
+
+UV U mirroring is explicit:
+
+```text
+default imported-game round trip: U unchanged, V flipped
+explicit replacement UV mirror:  U = 1 - U, V flipped
+```
+
+Do not infer U mirroring from `bmc_mirror_flip`. Some imported game meshes need a reversible round-trip, while replacement meshes may need an authored UV mirror adapter.
 
 Slot ids are governed by the Slot Contract:
 

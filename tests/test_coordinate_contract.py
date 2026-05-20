@@ -34,9 +34,12 @@ class CoordinateContractTests(unittest.TestCase):
 
     def test_object_metadata_resolves_contract_defaults(self):
         self.assertTrue(coordinate_contract.resolve_object_mirror_x({}, None))
+        self.assertFalse(coordinate_contract.resolve_object_uv_mirror_u({}, None))
         self.assertTrue(coordinate_contract.resolve_object_uv_flip_v({}, None))
         self.assertFalse(coordinate_contract.resolve_object_mirror_x({"bmc_mirror_flip": False}, True))
         self.assertTrue(coordinate_contract.resolve_object_mirror_x({"modimp_mirror_flip": True}, False))
+        self.assertTrue(coordinate_contract.resolve_object_uv_mirror_u({"bmc_uv_mirror_u": True}, False))
+        self.assertFalse(coordinate_contract.resolve_object_uv_mirror_u({"modimp_mirror_uv_u": False}, True))
         self.assertFalse(coordinate_contract.resolve_object_uv_flip_v({"bmc_uv_flip_v": False}, True))
         self.assertTrue(coordinate_contract.resolve_object_uv_flip_v({"modimp_flip_v": True}, False))
 

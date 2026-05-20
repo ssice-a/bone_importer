@@ -17,12 +17,14 @@ class RuntimeCoordinateContract:
 
     name: str
     mirror_x_default: bool = True
+    uv_mirror_u_default: bool = False
     uv_flip_v_default: bool = True
 
 
 RX_RUNTIME_COORDINATE_CONTRACT = RuntimeCoordinateContract(
     name="RX_RUNTIME_YV_AXIS",
     mirror_x_default=True,
+    uv_mirror_u_default=False,
     uv_flip_v_default=True,
 )
 
@@ -47,6 +49,12 @@ def bitangent_sign_needs_flip(*, mirror_x: bool, uv_flip_v: bool) -> bool:
     return bool(mirror_x) ^ bool(uv_flip_v)
 
 
+def mirror_uv_u(uv: Sequence[float]) -> tuple[float, float]:
+    """Mirror a UV coordinate horizontally for explicitly mirrored UV layouts."""
+
+    return (1.0 - float(uv[0]), float(uv[1]))
+
+
 def resolve_object_mirror_x(obj, default: bool | None = None) -> bool:
     """Resolve the mirror-X rule from common importer metadata."""
 
@@ -54,6 +62,22 @@ def resolve_object_mirror_x(obj, default: bool | None = None) -> bool:
     value = _object_get(obj, "bmc_mirror_flip", None)
     if value is None:
         value = _object_get(obj, "modimp_mirror_flip", None)
+    if value is None:
+        return fallback
+    return bool(value)
+
+
+def resolve_object_uv_mirror_u(obj, default: bool | None = None) -> bool:
+    """Resolve explicit horizontal UV mirroring from object metadata."""
+
+    fallback = RX_RUNTIME_COORDINATE_CONTRACT.uv_mirror_u_default if default is None else bool(default)
+    value = _object_get(obj, "bmc_uv_mirror_u", None)
+    if value is None:
+        value = _object_get(obj, "bmc_mirror_uv_u", None)
+    if value is None:
+        value = _object_get(obj, "modimp_mirror_uv_u", None)
+    if value is None:
+        value = _object_get(obj, "modimp_uv_mirror_u", None)
     if value is None:
         return fallback
     return bool(value)
@@ -118,7 +142,7 @@ RX_RUNTIME_COORDINATE_CONTRACT_HLSLI = r"""#ifndef RX_ANIM_COORDINATE_CONTRACT_H
 
 // Runtime Coordinate Contract: RX_RUNTIME_YV_AXIS.
 // YV/EFMI axis conversion itself is not a mirror. Mirror metadata may affect
-// exported geometry vector values, but Bone Payload slot ids remain runtime
+// exported geometry and UV values, but Bone Payload slot ids remain runtime
 // namespace ids unless the user provides an explicit Bone Slot Map. The game VS
 // consumes palette rows like the YV reference shader:
 //     game_row_0 =  blender_row_0

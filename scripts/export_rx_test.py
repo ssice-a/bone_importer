@@ -42,11 +42,13 @@ REPLACEMENT_GEOMETRY = {
         "geometry_object": "RXEXP_e78c7068-10590-0_000_\u9762.001",
         "vb_profile": "PACKED16",
         "cb1": "NONE",
+        "uv_mirror_u": True,
     },
     "2009f0d6-1356-0": {
         "geometry_object": "RXEXP_2009f0d6-1356-0_005_\u776b\u7709.001",
         "vb_profile": "PNTA40",
         "cb1": "EYELASH",
+        "uv_mirror_u": False,
     },
 }
 
@@ -303,6 +305,7 @@ def _export_geometry_with_rx(runtime_targets: dict):
         source = bpy.data.objects.get(config["geometry_object"])
         if source is None or source.type != "MESH":
             raise RuntimeError(f"Replacement geometry mesh not found: {config['geometry_object']}")
+        source["bmc_uv_mirror_u"] = bool(config.get("uv_mirror_u", False))
         region = bpy.data.collections.new(target_name)
         root.children.link(region)
         _link_object_once(region, source)

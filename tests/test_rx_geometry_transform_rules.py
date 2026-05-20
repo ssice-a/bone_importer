@@ -37,6 +37,7 @@ uv_transform = _load_rx_geometry_module("uv_transform")
 def _mesh_cache(
     *,
     mirror_flip=False,
+    uv_mirror_u=False,
     uv_flip_v=True,
     positions=None,
     normals=None,
@@ -49,6 +50,7 @@ def _mesh_cache(
         mesh=SimpleNamespace(),
         group_index_to_global={},
         mirror_flip=mirror_flip,
+        uv_mirror_u=uv_mirror_u,
         uv_flip_v=uv_flip_v,
         matrix_world_applied=True,
         vertex_position_values=list(positions or []),
@@ -99,6 +101,19 @@ class RxGeometryTransformRulesTests(unittest.TestCase):
         self.assertEqual(
             values.tolist(),
             [[0.25, 0.25], [0.5, 0.5], [0.75, 0.75]],
+        )
+
+    def test_export_uv_u_mirror_is_explicit(self):
+        cache = _mesh_cache(
+            uv_mirror_u=True,
+            uv_values=[(0.25, 0.75), (0.5, 0.5), (0.75, 0.25)],
+        )
+
+        values = export_buffers._game_uv_values(cache.mesh, "UV0", cache)
+
+        self.assertEqual(
+            values.tolist(),
+            [[0.75, 0.25], [0.5, 0.5], [0.25, 0.75]],
         )
 
     def test_export_uv_v_flip_can_be_disabled(self):
@@ -158,6 +173,11 @@ class RxGeometryTransformRulesTests(unittest.TestCase):
         self.assertFalse(export_buffers._object_uv_flip(imported_with_no_vflip, True))
         self.assertTrue(export_buffers._object_uv_flip(imported_with_vflip, False))
         self.assertTrue(export_buffers._object_uv_flip({}, True))
+
+    def test_object_uv_mirror_u_is_explicit_metadata(self):
+        self.assertFalse(export_buffers._object_uv_mirror_u({}, False))
+        self.assertTrue(export_buffers._object_uv_mirror_u({"bmc_uv_mirror_u": True}, False))
+        self.assertFalse(export_buffers._object_uv_mirror_u({"modimp_mirror_uv_u": False}, True))
 
 
 if __name__ == "__main__":

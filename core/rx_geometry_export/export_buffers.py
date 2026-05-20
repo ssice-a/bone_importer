@@ -11,12 +11,13 @@ from .draw_arrays import require_numpy
 from .texcoord_attrs import texcoord_color_attr_names, texcoord_component_attr_names
 from .export_package import ExportPartPlan, write_r32_index_buffer
 from .numpy_buffers import assign_bytes, foreach_get_array, object_attribute_array
-from .uv_transform import DEFAULT_UV_FLIP_V
+from .uv_transform import DEFAULT_UV_FLIP_V, DEFAULT_UV_MIRROR_U
 from ..coordinate_contract import (
     bitangent_sign_needs_flip,
     mirror_x_array,
     mirror_x_vector,
     resolve_object_mirror_x,
+    resolve_object_uv_mirror_u,
     resolve_object_uv_flip_v,
 )
 
@@ -74,6 +75,7 @@ class _MeshExportCache:
     mesh: object
     group_index_to_global: dict[int, int]
     mirror_flip: bool
+    uv_mirror_u: bool
     uv_flip_v: bool
     matrix_world_applied: bool
     vertex_position_values: list[tuple[float, float, float]] | None
@@ -104,6 +106,7 @@ class _MeshExportCache:
 class _ExportPartCache:
     part: ExportPartPlan
     mirror_flip_default: bool
+    uv_mirror_u_default: bool
     uv_flip_v_default: bool
     mesh_store: _EvaluatedMeshStore
     palette_to_local: dict[int, int]
@@ -117,11 +120,13 @@ class _ExportPartCache:
         *,
         mesh_store: _EvaluatedMeshStore,
         mirror_flip_default: bool = True,
+        uv_mirror_u_default: bool = DEFAULT_UV_MIRROR_U,
         uv_flip_v_default: bool = DEFAULT_UV_FLIP_V,
     ) -> "_ExportPartCache":
         return cls(
             part=part,
             mirror_flip_default=bool(mirror_flip_default),
+            uv_mirror_u_default=bool(uv_mirror_u_default),
             uv_flip_v_default=bool(uv_flip_v_default),
             mesh_store=mesh_store,
             palette_to_local={int(global_bone): local_index for local_index, global_bone in enumerate(part.palette_values)},
@@ -142,6 +147,7 @@ class _ExportPartCache:
                 mesh=mesh_record.mesh,
                 group_index_to_global=_group_index_to_global(mesh_obj),
                 mirror_flip=_object_mirror_flip(mesh_obj, self.mirror_flip_default),
+                uv_mirror_u=_object_uv_mirror_u(mesh_obj, self.uv_mirror_u_default),
                 uv_flip_v=_object_uv_flip(mesh_obj, self.uv_flip_v_default),
                 matrix_world_applied=mesh_record.matrix_world_applied,
                 vertex_position_values=None,
@@ -199,6 +205,7 @@ def write_part_geometry_buffers(
     vertex_layout_table: dict,
     *,
     mirror_flip_default: bool = True,
+    uv_mirror_u_default: bool = DEFAULT_UV_MIRROR_U,
     uv_flip_v_default: bool = DEFAULT_UV_FLIP_V,
 ) -> list[dict]:
     """Write IB/VB buffers for every export part and return manifest records."""
@@ -215,6 +222,7 @@ def write_part_geometry_buffers(
                     vertex_layout_table,
                     mesh_store=mesh_store,
                     mirror_flip_default=mirror_flip_default,
+                    uv_mirror_u_default=uv_mirror_u_default,
                     uv_flip_v_default=uv_flip_v_default,
                 )
             )
@@ -230,6 +238,7 @@ def _write_part_geometry_buffers(
     *,
     mesh_store: _EvaluatedMeshStore,
     mirror_flip_default: bool = True,
+    uv_mirror_u_default: bool = DEFAULT_UV_MIRROR_U,
     uv_flip_v_default: bool = DEFAULT_UV_FLIP_V,
 ) -> dict:
     total_start = time.perf_counter()
@@ -244,6 +253,7 @@ def _write_part_geometry_buffers(
         part,
         mesh_store=mesh_store,
         mirror_flip_default=mirror_flip_default,
+        uv_mirror_u_default=uv_mirror_u_default,
         uv_flip_v_default=uv_flip_v_default,
     )
 
@@ -1414,8 +1424,11 @@ def _game_uv_values(mesh, layer_name: str, mesh_cache: _MeshExportCache) -> list
     raw_uv_values = _uv_layer_values(layer, layer_name, mesh_cache)
     np = require_numpy()
     uv_values = np.asarray(raw_uv_values, dtype=np.float32)
-    if mesh_cache.uv_flip_v:
+    if mesh_cache.uv_mirror_u or mesh_cache.uv_flip_v:
         uv_values = uv_values.copy()
+    if mesh_cache.uv_mirror_u:
+        uv_values[:, 0] = 1.0 - uv_values[:, 0]
+    if mesh_cache.uv_flip_v:
         uv_values[:, 1] = 1.0 - uv_values[:, 1]
     mesh_cache.game_uv_values_by_layer[layer_name] = uv_values
     return uv_values
@@ -1833,6 +1846,10 @@ def _point_attribute_value(mesh, names: tuple[str, ...], vertex_index: int, mesh
 
 def _object_mirror_flip(obj, default: bool) -> bool:
     return resolve_object_mirror_x(obj, default)
+
+
+def _object_uv_mirror_u(obj, default: bool) -> bool:
+    return resolve_object_uv_mirror_u(obj, default)
 
 
 def _object_uv_flip(obj, default: bool) -> bool:
