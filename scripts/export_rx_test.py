@@ -54,7 +54,7 @@ REPLACEMENT_GEOMETRY = {
         "cb1": "EYELASH",
         "mirror_flip": True,
         "uv_mirror_u": False,
-        "uv_flip_v": True,
+        "uv_flip_v": False,
     },
 }
 

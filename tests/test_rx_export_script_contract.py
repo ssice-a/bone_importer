@@ -23,7 +23,7 @@ class RxExportScriptContractTests(unittest.TestCase):
         self.assertIn('source["bmc_uv_mirror_u"]', source)
         self.assertIn('source["bmc_uv_flip_v"]', source)
 
-    def test_face_replacement_disables_v_flip_for_current_rx_scene(self):
+    def test_replacements_disable_v_flip_for_current_rx_scene(self):
         replacement_geometry = _replacement_geometry_literal()
         face = replacement_geometry["e78c7068-10590-0"]
         eyelash = replacement_geometry["2009f0d6-1356-0"]
@@ -33,7 +33,7 @@ class RxExportScriptContractTests(unittest.TestCase):
         self.assertFalse(face["uv_flip_v"])
         self.assertTrue(eyelash["mirror_flip"])
         self.assertFalse(eyelash["uv_mirror_u"])
-        self.assertTrue(eyelash["uv_flip_v"])
+        self.assertFalse(eyelash["uv_flip_v"])
 
     def test_replacement_morph_sources_are_explicit(self):
         replacement_geometry = _replacement_geometry_literal()
