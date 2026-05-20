@@ -115,7 +115,9 @@ target slot 1 writes runtime palette slot 1
 ...
 ```
 
-For automatic Target Numeric Groups on BMC-imported mirrored meshes, the runtime slot remains unchanged but the sampled source bone may be the mirrored Blender-side slot. Example: target runtime slot `0` still writes palette slot `0`, but it may sample source bone `56__<DrawPart>` if that source bone is the X-mirrored centroid match for slot `0`.
+For automatic Target Numeric Groups on BMC-imported mirrored meshes, the runtime slot remains unchanged but the sampled source bone may be the mirrored Blender-side slot. Example: target runtime slot `0` still writes palette slot `0`, but it may sample source bone `56__<DrawPart>` if that source bone is the X-mirrored source-space match for slot `0`.
+
+The automatic mirror adapter prefers source bone rest/head positions because they describe the source slot namespace directly. Vertex-group centroids are only a fallback for non-standard imports without matching source bones.
 
 Explicit Bone Slot Map JSON always wins. Use it for replacement/external models or any DrawPart where centroid-based imported-mirror pairing is not the desired source-space adapter.
 

@@ -80,21 +80,38 @@ class PoseBones(list):
             return any(pose_bone.name == item for pose_bone in self)
         return super().__contains__(item)
 
+    def get(self, name, default=None):
+        for pose_bone in self:
+            if pose_bone.name == name:
+                return pose_bone
+        return default
+
 
 class Armature:
     type = "ARMATURE"
 
-    def __init__(self, name, mesh_name):
+    def __init__(self, name, mesh_name, head_positions=None):
+        head_positions = head_positions or {
+            0: (-1.0, 0.0, 0.0),
+            1: (1.0, 0.0, 0.0),
+            2: (0.0, 0.0, 0.0),
+        }
         self.name = name
+        self.matrix_world = None
         self.pose = types.SimpleNamespace(
             bones=PoseBones(
                 [
-                    PoseBone(f"0__{mesh_name}"),
-                    PoseBone(f"1__{mesh_name}"),
-                    PoseBone(f"2__{mesh_name}"),
+                    self._pose_bone(0, mesh_name, head_positions),
+                    self._pose_bone(1, mesh_name, head_positions),
+                    self._pose_bone(2, mesh_name, head_positions),
                 ]
             )
         )
+
+    def _pose_bone(self, slot_id, mesh_name, head_positions):
+        pose_bone = PoseBone(f"{slot_id}__{mesh_name}")
+        pose_bone.bone = types.SimpleNamespace(head_local=Vector(head_positions[slot_id]))
+        return pose_bone
 
 
 class DrawPart:
@@ -164,6 +181,26 @@ class SlotContractTests(unittest.TestCase):
         self.assertEqual(
             [(binding.slot_id, binding.source_bone) for binding in bindings],
             [(0, "0__mesh"), (1, "1__mesh"), (2, "2__mesh")],
+        )
+
+    def test_mirror_adapter_prefers_source_bone_positions_over_weight_centroids(self):
+        mesh = MeshObject("mesh", mirror_x=True)
+        armature = Armature(
+            "arm",
+            mesh.name,
+            head_positions={
+                0: (-1.0, 0.0, 0.0),
+                1: (0.0, 0.0, 0.0),
+                2: (1.0, 0.0, 0.0),
+            },
+        )
+        draw_part = DrawPart(mesh, armature)
+
+        bindings = self.slot_contract.resolve_bone_slot_bindings(draw_part)
+
+        self.assertEqual(
+            [(binding.slot_id, binding.source_bone) for binding in bindings],
+            [(0, "2__mesh"), (1, "1__mesh"), (2, "0__mesh")],
         )
 
     def test_explicit_slot_map_is_not_mirrored(self):

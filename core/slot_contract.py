@@ -225,6 +225,25 @@ def _vertex_group_slot_centroids(obj, slot_ids: tuple[int, ...]) -> dict[int, ob
     return centroids
 
 
+def _source_bone_slot_points(source_armature, draw_part, slot_ids: tuple[int, ...]) -> dict[int, object]:
+    if source_armature is None or getattr(source_armature, "type", "") != "ARMATURE":
+        return {}
+    matrix_world = getattr(source_armature, "matrix_world", None)
+    points = {}
+    for slot_id in slot_ids:
+        source_bone = _find_source_bone_for_slot(source_armature, draw_part, int(slot_id))
+        if not source_bone:
+            continue
+        pose_bone = source_armature.pose.bones.get(source_bone)
+        if pose_bone is None:
+            continue
+        point = pose_bone.bone.head_local
+        if matrix_world is not None:
+            point = matrix_world @ point
+        points[int(slot_id)] = point
+    return points
+
+
 def _centroid_bounds_diagonal(centroids: dict[int, object]) -> float:
     if not centroids:
         return 0.0
@@ -250,7 +269,7 @@ def _should_adapt_import_mirrored_numeric_slots(draw_part, slot_contract: SlotCo
     return bool(resolve_object_mirror_x(source_object, False))
 
 
-def _build_import_mirror_slot_map(draw_part, slot_contract: SlotContract) -> dict[int, int]:
+def _build_import_mirror_slot_map(draw_part, slot_contract: SlotContract, source_armature) -> dict[int, int]:
     """Map runtime target slots to the mirrored Blender-side source slots.
 
     This is not a runtime slot-id semantic swap.  It is an importer adapter:
@@ -261,7 +280,13 @@ def _build_import_mirror_slot_map(draw_part, slot_contract: SlotContract) -> dic
     if not _should_adapt_import_mirrored_numeric_slots(draw_part, slot_contract):
         return {}
 
-    centroids = _vertex_group_slot_centroids(getattr(draw_part, "source_object", None), slot_contract.slot_ids)
+    # Bone rest/head positions describe the source slot namespace more directly
+    # than weight centroids, especially for skirts, hair, and other overlapping
+    # cloth/physics regions. Vertex-group centroids remain a fallback for
+    # non-standard imported meshes without matching source bones.
+    centroids = _source_bone_slot_points(source_armature, draw_part, slot_contract.slot_ids)
+    if set(centroids) != set(slot_contract.slot_ids):
+        centroids = _vertex_group_slot_centroids(getattr(draw_part, "source_object", None), slot_contract.slot_ids)
     if len(centroids) <= 1:
         return {}
 
@@ -345,7 +370,7 @@ def resolve_bone_slot_bindings(draw_part, require_complete: bool = True) -> tupl
     source_armature = getattr(draw_part, "bone_source_armature", None) or getattr(draw_part, "proxy_armature", None)
     explicit_bindings = _parse_explicit_slot_map(draw_part, source_armature)
     explicit_by_slot = {binding.slot_id: binding for binding in explicit_bindings}
-    mirror_slot_map = _build_import_mirror_slot_map(draw_part, slot_contract)
+    mirror_slot_map = _build_import_mirror_slot_map(draw_part, slot_contract, source_armature)
 
     bindings = []
     missing_slots = []
