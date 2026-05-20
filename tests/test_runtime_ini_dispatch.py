@@ -73,6 +73,7 @@ class RuntimeIniDispatchTests(unittest.TestCase):
     def test_runtime_ini_runs_rx_ui_present_commandlist(self):
         source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
 
+        self.assertIn('namespace = RX', source)
         self.assertIn('run = CommandListRXUIPresent', source)
         self.assertIn('"update_rx_panel_state_cs.hlsl"', source)
         self.assertIn('"panel_sprite.hlsl"', source)
