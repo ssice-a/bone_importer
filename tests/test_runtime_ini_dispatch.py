@@ -4,6 +4,8 @@ from pathlib import Path
 
 RUNTIME_INI_SOURCE = Path(__file__).resolve().parents[1] / "core" / "runtime_ini.py"
 COORDINATE_CONTRACT_SOURCE = Path(__file__).resolve().parents[1] / "core" / "coordinate_contract.py"
+OPERATORS_SOURCE = Path(__file__).resolve().parents[1] / "operators.py"
+BONE_PAYLOAD_SOURCE = Path(__file__).resolve().parents[1] / "core" / "bone_payload_export.py"
 
 
 class RuntimeIniDispatchTests(unittest.TestCase):
@@ -58,6 +60,27 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn('_line(lines, "cs-u1 = null")', source)
         self.assertIn("RWStructuredBuffer<uint4> MasterPlayback : register(u1);", source)
         self.assertNotIn("StructuredBuffer<uint4> MasterPlayback : register(t3);\nRWStructuredBuffer<float4> BonePalette", source)
+
+    def test_runtime_speed_default_comes_from_clip_metadata(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("def _clip_default_ticks_per_sample", source)
+        self.assertIn("_append_constants(lines, _clip_default_ticks_per_sample(manifest, clip_name))", source)
+        self.assertIn('global persist $rx_anim_speed = {speed}', source)
+        self.assertNotIn('_line(lines, "global persist $rx_anim_speed = 1")', source)
+
+    def test_export_buttons_forward_ticks_per_sample_setting(self):
+        source = OPERATORS_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("presents_per_step=scene.bi_animation_presents_per_step", source)
+        self.assertNotIn("presents_per_step=1,", source)
+
+    def test_bone_payload_shared_clip_uses_exported_ticks_per_sample(self):
+        source = BONE_PAYLOAD_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("resolved_ticks_per_sample = max(int(ticks_per_sample), 1)", source)
+        self.assertIn("ticks_per_sample=resolved_ticks_per_sample", source)
+        self.assertNotIn("ticks_per_sample=1,\n        write_metadata=write_metadata", source)
 
 
 if __name__ == "__main__":

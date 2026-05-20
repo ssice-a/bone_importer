@@ -354,6 +354,10 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
     scene.bi_animation_frame_end = _env_int("RX_EXPORT_FRAME_END", DEFAULT_FRAME_END)
     scene.bi_animation_frame_step = max(_env_int("RX_EXPORT_FRAME_STEP", DEFAULT_FRAME_STEP), 1)
     scene.bi_animation_fps = float(scene.render.fps or 30)
+    scene.bi_animation_presents_per_step = max(
+        _env_int("RX_EXPORT_TICKS_PER_SAMPLE", int(getattr(scene, "bi_animation_presents_per_step", 1) or 1)),
+        1,
+    )
     scene.bi_morph_include_normals = True
     scene.bi_morph_include_tangents = True
 
@@ -462,6 +466,7 @@ def main():
         frame_end=scene.bi_animation_frame_end,
         frame_step=scene.bi_animation_frame_step,
         fps=scene.bi_animation_fps,
+        presents_per_step=scene.bi_animation_presents_per_step,
         write_metadata=True,
     )
     timings["bone_export_seconds"] = time.perf_counter() - stage_start
@@ -475,7 +480,7 @@ def main():
         frame_end=scene.bi_animation_frame_end,
         frame_step=scene.bi_animation_frame_step,
         fps=scene.bi_animation_fps,
-        presents_per_step=1,
+        presents_per_step=scene.bi_animation_presents_per_step,
         default_loop_start=-1,
         default_loop_end=-1,
         write_metadata=True,
@@ -491,6 +496,7 @@ def main():
         "frame_start": int(scene.bi_animation_frame_start),
         "frame_end": int(scene.bi_animation_frame_end),
         "frame_step": int(scene.bi_animation_frame_step),
+        "ticks_per_sample": int(scene.bi_animation_presents_per_step),
         "sample_count": int(bone_result.sampled_frames or morph_result.sampled_frames),
         "runtime_targets": len(runtime_targets),
         "draw_parts": len(draw_parts),

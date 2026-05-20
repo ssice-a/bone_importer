@@ -147,6 +147,7 @@ def _build_bone_payload_metadata(
     exported_frames,
     frame_step,
     fps,
+    ticks_per_sample,
     clip_name,
     clip_id,
     bone_static_path,
@@ -176,8 +177,8 @@ def _build_bone_payload_metadata(
         "frame_numbers": list(exported_frames),
         "fps": float(fps),
         "clip_fps": max(int(round(float(fps))), 1),
-        "default_ticks_per_sample": 1,
-        "default_presents_per_step": 1,
+        "default_ticks_per_sample": max(int(ticks_per_sample), 1),
+        "default_presents_per_step": max(int(ticks_per_sample), 1),
         "default_loop_start_sample": 0,
         "default_loop_end_sample": max(len(exported_frames) - 1, 0),
         "reserved_rows": int(RESERVED_PALETTE_ROWS),
@@ -255,6 +256,7 @@ def export_bone_payload_for_draw_part(
     frame_end,
     frame_step,
     fps,
+    ticks_per_sample=1,
     write_metadata=True,
 ):
     """Export one DrawPart-local Bone Payload."""
@@ -299,6 +301,7 @@ def export_bone_payload_for_draw_part(
         exported_frames,
         frame_step,
         fps,
+        ticks_per_sample,
         clip_name,
         clip_id,
         bone_static_path,
@@ -719,10 +722,12 @@ def export_bone_payloads_for_draw_parts(
     frame_end,
     frame_step,
     fps,
+    ticks_per_sample=1,
     write_metadata=True,
 ):
     """Export all enabled DrawPart Bone Payloads and shared Clip buffers."""
     start = perf_counter()
+    resolved_ticks_per_sample = max(int(ticks_per_sample), 1)
     normalized_draw_parts = tuple(draw_parts)
     exported_frames = normalize_animation_frame_range(frame_start, frame_end, frame_step)
     results = []
@@ -908,6 +913,7 @@ def export_bone_payloads_for_draw_parts(
                 exported_frames,
                 frame_step,
                 fps,
+                resolved_ticks_per_sample,
                 clip_name,
                 clip_id,
                 payload["bone_static_path"],
@@ -960,7 +966,7 @@ def export_bone_payloads_for_draw_parts(
         clip_id=clip_id,
         exported_frames=exported_frames,
         fps=fps,
-        ticks_per_sample=1,
+        ticks_per_sample=resolved_ticks_per_sample,
         write_metadata=write_metadata,
     )
     timings["shared_clip_seconds"] = perf_counter() - shared_clip_start

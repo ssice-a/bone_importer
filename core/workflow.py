@@ -878,6 +878,7 @@ def export_bone_payloads_for_selected_draw_parts(
     frame_end,
     frame_step,
     fps,
+    presents_per_step=1,
     write_metadata=True,
 ):
     """Export the manifest-driven per-DrawPart Bone Payload route."""
@@ -892,6 +893,7 @@ def export_bone_payloads_for_selected_draw_parts(
         frame_end=frame_end,
         frame_step=frame_step,
         fps=fps,
+        ticks_per_sample=presents_per_step,
         write_metadata=write_metadata,
     )
     export_results = tuple(payload_result["results"])
@@ -958,15 +960,16 @@ def export_animation_for_selected_proxy_armatures(
 ):
     """Export standalone RX Bone Payload buffers for the current target DrawPart set."""
     return export_bone_payloads_for_selected_draw_parts(
-        context,
-        output_directory,
-        clip_name,
-        clip_id,
-        frame_start,
-        frame_end,
-        frame_step,
-        fps,
-        write_metadata,
+        context=context,
+        output_directory=output_directory,
+        clip_name=clip_name,
+        clip_id=clip_id,
+        frame_start=frame_start,
+        frame_end=frame_end,
+        frame_step=frame_step,
+        fps=fps,
+        presents_per_step=presents_per_step,
+        write_metadata=write_metadata,
     )
 
 

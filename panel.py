@@ -129,10 +129,11 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         frame_row.prop(scene, "bi_animation_frame_end")
         animation_box.prop(scene, "bi_animation_frame_step")
         animation_box.prop(scene, "bi_animation_fps")
+        animation_box.prop(scene, "bi_animation_presents_per_step")
         animation_button_row = animation_box.row(align=True)
         animation_button_row.operator("object.bi_export_animation", text="Export Bone Payload", icon="EXPORT")
         animation_box.label(
-            text="Ticks/Sample and Loop Start/End now use automatic defaults.",
+            text="Runtime speed uses Ticks/Sample as the default and can still be changed by the INI/UI speed variable.",
             icon="INFO",
         )
         animation_box.enabled = (
