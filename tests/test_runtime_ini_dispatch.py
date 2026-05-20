@@ -1,4 +1,8 @@
 import unittest
+import importlib
+import re
+import sys
+import types
 from pathlib import Path
 
 
@@ -6,6 +10,23 @@ RUNTIME_INI_SOURCE = Path(__file__).resolve().parents[1] / "core" / "runtime_ini
 COORDINATE_CONTRACT_SOURCE = Path(__file__).resolve().parents[1] / "core" / "coordinate_contract.py"
 OPERATORS_SOURCE = Path(__file__).resolve().parents[1] / "operators.py"
 BONE_PAYLOAD_SOURCE = Path(__file__).resolve().parents[1] / "core" / "bone_payload_export.py"
+
+
+def _load_runtime_ini_builder():
+    core_package = types.ModuleType("core")
+    core_package.__path__ = [str(RUNTIME_INI_SOURCE.parent)]
+    sys.modules.setdefault("core", core_package)
+    animation_stub = types.ModuleType("core.animation_export")
+    animation_stub.normalize_clip_name = lambda value: str(value or "rxanimin")
+    animation_stub.sanitize_export_name = lambda value, fallback: re.sub(r"[^0-9A-Za-z_]+", "_", str(value or fallback)).strip("_") or fallback
+    sys.modules["core.animation_export"] = animation_stub
+    draw_part_stub = types.ModuleType("core.draw_part")
+    draw_part_stub.DEFAULT_MATCH_PRIORITY = -1000
+    sys.modules["core.draw_part"] = draw_part_stub
+    manifest_stub = types.ModuleType("core.manifest")
+    manifest_stub.load_export_manifest = lambda _output_directory: {}
+    sys.modules["core.manifest"] = manifest_stub
+    return importlib.import_module("core.runtime_ini").build_runtime_ini
 
 
 class RuntimeIniDispatchTests(unittest.TestCase):
@@ -93,6 +114,93 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("resolved_ticks_per_sample = max(int(ticks_per_sample), 1)", source)
         self.assertIn("ticks_per_sample=resolved_ticks_per_sample", source)
         self.assertNotIn("ticks_per_sample=1,\n        write_metadata=write_metadata", source)
+
+    def test_morph_draw_part_runs_morph_before_bone_and_binds_runtime_vb(self):
+        manifest = {
+            "clips": {
+                "rxanimin": {
+                    "timeline_static": "rxanimin_timeline_static.buf",
+                    "master_playback": "rxanimin_master_playback.buf",
+                    "default_ticks_per_sample": 4,
+                }
+            },
+            "draw_parts": {
+                "e78c7068-10590-0": {
+                    "hash": "e78c7068",
+                    "match_index_count": 10590,
+                    "match_priority": -1000,
+                },
+                "2009f0d6-1356-0": {
+                    "hash": "2009f0d6",
+                    "match_index_count": 1356,
+                    "match_priority": -1000,
+                    "cb1_profile": "EYELASH",
+                },
+            },
+            "payloads": {
+                "e78c7068-10590-0": {
+                    "bone": {
+                        "static": "e78c7068_static.buf",
+                        "anim": "e78c7068_anim.buf",
+                        "bind": "e78c7068_bind.buf",
+                        "palette_row_count": 3,
+                    },
+                    "morph": {
+                        "static": "e78c7068_morph_static.buf",
+                        "anim": "e78c7068_morph_anim.buf",
+                        "base_position_path": "Buffer/e78c7068-10590-0_part00-Position.buf",
+                        "base_position_stride": 16,
+                        "base_position_layout": "EFMI_PACKED16",
+                        "vertex_count": 10590,
+                    },
+                    "geometry": [
+                        {
+                            "resource_suffix": "e78c7068_10590_0_part00",
+                            "index_buffer": {"file_path": "Buffer/e78c7068-10590-0_part00-Index.buf", "index_count": 10590},
+                            "vertex_buffers": {
+                                "vb0": {"file_path": "Buffer/e78c7068-10590-0_part00-Position.buf", "stride": 16},
+                                "vb1": {"file_path": "Buffer/e78c7068-10590-0_part00-Texcoord.buf", "stride": 12},
+                                "vb2": {"file_path": "Buffer/e78c7068-10590-0_part00-Blend.buf", "stride": 12},
+                            },
+                        }
+                    ],
+                },
+                "2009f0d6-1356-0": {
+                    "morph": {
+                        "static": "2009f0d6_morph_static.buf",
+                        "anim": "2009f0d6_morph_anim.buf",
+                        "base_position_path": "Buffer/2009f0d6-1356-0_part00-Position.buf",
+                        "base_position_stride": 40,
+                        "base_position_layout": "EFMI_PNTA40",
+                        "vertex_count": 1356,
+                    },
+                    "geometry": [
+                        {
+                            "resource_suffix": "2009f0d6_1356_0_part00",
+                            "index_buffer": {"file_path": "Buffer/2009f0d6-1356-0_part00-Index.buf", "index_count": 1356},
+                            "vertex_buffers": {
+                                "vb0": {"file_path": "Buffer/2009f0d6-1356-0_part00-Position.buf", "stride": 40},
+                                "vb1": {"file_path": "Buffer/2009f0d6-1356-0_part00-Texcoord.buf", "stride": 8},
+                                "vb2": {"file_path": "Buffer/2009f0d6-1356-0_part00-Blend.buf", "stride": 32},
+                                "vb3": {"file_path": "Buffer/2009f0d6-1356-0_part00-VB3.buf", "stride": 40},
+                            },
+                        }
+                    ],
+                },
+            },
+        }
+
+        ini = _load_runtime_ini_builder()(manifest, "rxanimin", r"E:\XXMI\EFMI\Mods\RX")
+
+        morph_run_index = ini.index("run = CustomShader_ApplyMorph\n")
+        bone_run_index = ini.index("run = CustomShader_UpdateBonePaletteTQ")
+        self.assertLess(morph_run_index, bone_run_index)
+        self.assertIn("dispatch = 166, 1, 1\nrun = CustomShader_ApplyMorph", ini)
+        self.assertIn("vb0 = ref ResourceMorphRuntimeVB_e78c7068_10590_0", ini)
+        self.assertIn("vb3 = ref ResourceMorphRuntimeVB_e78c7068_10590_0", ini)
+        self.assertIn("dispatch = 22, 1, 1\nrun = CustomShader_ApplyMorph_PNTA40", ini)
+        self.assertIn("vb0 = ref ResourceMorphRuntimeVB_2009f0d6_1356_0", ini)
+        self.assertIn("vb3 = ref ResourceGeometry_2009f0d6_1356_0_part00_vb3", ini)
 
 
 if __name__ == "__main__":
