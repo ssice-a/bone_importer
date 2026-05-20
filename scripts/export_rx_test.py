@@ -433,6 +433,9 @@ def main():
     timings = {}
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.environ.setdefault("RX_BONE_SAMPLE_HIDE_MESHES", "1")
+    # BoneX driver constraints are part of the final evaluated pose.  Muting
+    # them makes physics bones sample a different rig state than normal bones.
+    os.environ["RX_BONE_SAMPLE_MUTE_STATIC_BONEX"] = "0"
     stage_start = time.perf_counter()
     _reset_rx_manifest()
     _register_addon()

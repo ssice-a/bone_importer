@@ -74,6 +74,12 @@ class BonePayloadLayoutTests(unittest.TestCase):
         self.assertIn('"static_constraint_count": len(static_constraints)', source)
         self.assertIn('"skip_reason": "disabled"', source)
 
+    def test_rx_validation_export_forces_bonex_constraints_enabled(self):
+        source_path = Path(__file__).resolve().parents[1] / "scripts" / "export_rx_test.py"
+        source = source_path.read_text(encoding="utf-8")
+
+        self.assertIn('os.environ["RX_BONE_SAMPLE_MUTE_STATIC_BONEX"] = "0"', source)
+
 
 if __name__ == "__main__":
     unittest.main()
