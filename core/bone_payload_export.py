@@ -12,6 +12,7 @@ from time import perf_counter
 import bpy
 import numpy as np
 
+from ..constants import RESERVED_PALETTE_ROWS
 from .bone_sample_bank import build_bone_sample_plan, resolve_sample_cache_directory, select_payload_samples
 from .animation_export import (
     build_master_playback_uint4_rows,
@@ -59,13 +60,13 @@ def build_bone_static_uint4_rows(slot_ids: tuple[int, ...], sample_count: int):
     """Build the fixed Bone Payload static table."""
     normalized_slot_ids = tuple(sorted(int(slot_id) for slot_id in slot_ids))
     slot_rows = _pack_slot_ids_uint4(normalized_slot_ids)
-    palette_row_count = (max(normalized_slot_ids) + 1) * 3 if normalized_slot_ids else 0
+    palette_row_count = RESERVED_PALETTE_ROWS + ((max(normalized_slot_ids) + 1) * 3 if normalized_slot_ids else 0)
     previous_palette_base = palette_row_count
     return [
         (
             len(normalized_slot_ids),
             max(int(sample_count), 1),
-            0,
+            int(RESERVED_PALETTE_ROWS),
             len(slot_rows),
         ),
         (
@@ -179,6 +180,9 @@ def _build_bone_payload_metadata(
         "default_presents_per_step": 1,
         "default_loop_start_sample": 0,
         "default_loop_end_sample": max(len(exported_frames) - 1, 0),
+        "reserved_rows": int(RESERVED_PALETTE_ROWS),
+        "palette_row_count": int(RESERVED_PALETTE_ROWS + ((max(slot_ids) + 1) * 3 if slot_ids else 0)),
+        "previous_palette_base": int(RESERVED_PALETTE_ROWS + ((max(slot_ids) + 1) * 3 if slot_ids else 0)),
         "rows_per_bone": 2,
         "storage_layout": "[sample][bone][row]",
         "bone_static_path": bone_static_path,

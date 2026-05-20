@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+from ..constants import RESERVED_PALETTE_ROWS
 from .animation_export import normalize_clip_name
 from .draw_part import build_draw_key, draw_part_manifest_rows
 
@@ -108,7 +109,12 @@ def write_export_manifest(
             "static": metadata.get("bone_static_path", export_result.static_clip_path),
             "anim": metadata.get("bone_anim_path", export_result.tqs_path),
             "bind": metadata.get("bone_bind_path", export_result.bind_path),
-            "palette_row_count": (max(metadata.get("slot_ids", [0])) + 1) * 3 if metadata.get("slot_ids") else 0,
+            "palette_row_count": int(
+                metadata.get(
+                    "palette_row_count",
+                    RESERVED_PALETTE_ROWS + ((max(metadata.get("slot_ids", [0])) + 1) * 3 if metadata.get("slot_ids") else 0),
+                )
+            ),
         }
         manifest["bone_exports"][draw_key] = bone_payload
         manifest["payloads"].setdefault(draw_key, {})["bone"] = bone_payload

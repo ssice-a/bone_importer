@@ -740,6 +740,13 @@ void ConvertSkinRowsFromBlenderToGame(float4 blender0, float4 blender1, float4 b
     game2 = -blender1;
 }
 
+float4 BuildIdentityRow(uint row_index)
+{
+    if (row_index == 0u) return float4(1.0, 0.0, 0.0, 0.0);
+    if (row_index == 1u) return float4(0.0, 1.0, 0.0, 0.0);
+    return float4(0.0, 0.0, 1.0, 0.0);
+}
+
 uint LoadSlotId(uint bone_index)
 {
     uint4 row = BoneStatic[2 + bone_index / 4];
@@ -761,6 +768,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     uint4 header1 = BoneStatic[1];
     uint bone_count = header0.x;
     uint sample_count = header0.y;
+    uint reserved_rows = header0.z;
     if (bone_index >= bone_count) return;
 
     uint4 playback0 = MasterPlayback[0];
@@ -797,7 +805,21 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     ConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
 
     uint slot_id = LoadSlotId(bone_index);
-    uint row_base = slot_id * 3;
+    uint row_base = reserved_rows + slot_id * 3;
+    if (bone_index == 0u)
+    {
+        uint reserved_limit = min(reserved_rows, 3u);
+        [unroll]
+        for (uint reserved_row = 0u; reserved_row < 3u; reserved_row += 1u)
+        {
+            if (reserved_row < reserved_limit)
+            {
+                float4 identity_row = BuildIdentityRow(reserved_row);
+                BonePalette[reserved_row] = identity_row;
+                BonePalette[header1.y + reserved_row] = identity_row;
+            }
+        }
+    }
     BonePalette[row_base + 0] = out0;
     BonePalette[row_base + 1] = out1;
     BonePalette[row_base + 2] = out2;
