@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from .animation_export import normalize_clip_name, sanitize_export_name
+from .coordinate_contract import hlsl_coordinate_contract
 from .draw_part import DEFAULT_MATCH_PRIORITY
 from .manifest import load_export_manifest
 
@@ -48,7 +49,6 @@ def resolve_runtime_ini_path(output_directory: str, clip_name: str) -> str:
 
 def _append_constants(lines: list[str]):
     _line(lines, "[Constants]")
-    _line(lines, "global persist $rx_anim_enable = 1")
     _line(lines, "global persist $rx_anim_play = 1")
     _line(lines, "global persist $rx_anim_control_token = 0")
     _line(lines, "global persist $rx_anim_control_value = 0")
@@ -63,9 +63,7 @@ def _append_constants(lines: list[str]):
     _line(lines, "w = $rx_anim_seek_active")
     _line(lines, "x1 = $rx_anim_speed")
     _line(lines, "y1 = $rx_anim_seek_norm")
-    _line(lines, "if $rx_anim_enable == 1")
-    _line(lines, "    run = CustomShader_UpdateMasterPlayback")
-    _line(lines, "endif")
+    _line(lines, "run = CustomShader_UpdateMasterPlayback")
     _line(lines)
 
 
@@ -126,10 +124,23 @@ def _append_global_resources(lines: list[str], manifest: dict, clip_name: str, o
     _line(lines)
     _line(lines, "[CustomShader_UpdateBonePaletteTQ]")
     _line(lines, "cs = hlsl\\update_bone_palette_tq_cs.hlsl")
-    _line(lines, "cs-t3 = ResourceMasterPlayback_SRV")
+    _line(lines, "cs-u1 = ResourceMasterPlayback")
+    # Over-dispatching is intentional: each draw part is capped to 256 bone slots,
+    # and the shader exits once dispatch_id.x reaches the payload bone count.
+    _line(lines, "dispatch = 256, 1, 1")
+    _line(lines, "cs-t0 = null")
+    _line(lines, "cs-t1 = null")
+    _line(lines, "cs-t2 = null")
+    _line(lines, "cs-u0 = null")
+    _line(lines, "cs-u1 = null")
     _line(lines)
     _line(lines, "[CustomShader_RedirectCB1LocalPalette]")
     _line(lines, "cs = hlsl\\redirect_cb1_local_palette_cs.hlsl")
+    _line(lines, "dispatch = 4, 1, 1")
+    _line(lines, "cs-u0 = null")
+    _line(lines, "cs-t0 = null")
+    _line(lines, "cs-t2 = null")
+    _line(lines, "cs-t3 = null")
     _line(lines)
     _line(lines, "[CustomShader_ApplyMorph]")
     _line(lines, "cs = hlsl\\apply_morph_to_vb_cs.hlsl")
@@ -283,9 +294,8 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
     if first_index:
         _line(lines, f"match_first_index = {first_index}")
     _line(lines, f"match_priority = {match_priority}")
-    _line(lines, "if $rx_anim_enable == 1")
     if geometry_record is not None:
-        _line(lines, "    handling = skip")
+        _line(lines, "handling = skip")
     if morph_payload is not None and use_runtime_morph_vb:
         shader = "CustomShader_ApplyMorph_PNTA40" if str(morph_payload.get("base_position_layout", "")).endswith("PNTA40") else "CustomShader_ApplyMorph"
         base_resource = (
@@ -293,57 +303,51 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
             if geometry_record is not None and geometry_vertex_buffers.get("vb0")
             else (morph_payload.get("base_position_resource_name", "") or f"ResourceBasePosition_{key}")
         )
-        _line(lines, f"    cs-t0 = {base_resource}")
-        _line(lines, f"    cs-t1 = ResourceMorphStatic_{key}")
-        _line(lines, f"    cs-t2 = ResourceMorphAnim_{key}")
-        _line(lines, f"    cs-u0 = ResourceMorphRuntimeVB_{key}_UAV")
-        _line(lines, f"    dispatch = {(int(morph_payload.get('vertex_count', 0) or 0) + 63) // 64}, 1, 1")
-        _line(lines, f"    run = {shader}")
-        _line(lines, f"    ResourceMorphRuntimeVB_{key} = copy ResourceMorphRuntimeVB_{key}_UAV")
+        _line(lines, f"cs-t0 = {base_resource}")
+        _line(lines, f"cs-t1 = ResourceMorphStatic_{key}")
+        _line(lines, f"cs-t2 = ResourceMorphAnim_{key}")
+        _line(lines, f"cs-u0 = ResourceMorphRuntimeVB_{key}_UAV")
+        _line(lines, f"run = {shader}")
+        _line(lines, f"dispatch = {(int(morph_payload.get('vertex_count', 0) or 0) + 63) // 64}, 1, 1")
+        _line(lines, f"ResourceMorphRuntimeVB_{key} = copy ResourceMorphRuntimeVB_{key}_UAV")
     if bone_payload is not None:
-        bone_count = max(len(bone_payload.get("slot_ids", [])), 1)
-        _line(lines, "    run = CustomShader_ExtractCB1")
-        _line(lines, f"    cs-t0 = ResourceBoneAnim_{key}")
-        _line(lines, f"    cs-t1 = ResourceBoneBind_{key}")
-        _line(lines, f"    cs-t2 = ResourceBoneStatic_{key}")
-        _line(lines, f"    cs-u0 = ResourceBonePalette_{key}_UAV")
-        _line(lines, f"    dispatch = {bone_count}, 1, 1")
-        _line(lines, "    run = CustomShader_UpdateBonePaletteTQ")
-        _line(lines, f"    ResourceBonePalette_{key} = copy ResourceBonePalette_{key}_UAV")
-        _line(lines, f"    cs-u0 = ResourceFakeCB1_{key}_UAV")
-        _line(lines, "    cs-t0 = ResourceDumpedCB1_SRV")
-        _line(lines, f"    cs-t2 = ResourceBoneStatic_{key}")
+        _line(lines, "run = CustomShader_ExtractCB1")
+        _line(lines, f"cs-t0 = ResourceBoneAnim_{key}")
+        _line(lines, f"cs-t1 = ResourceBoneBind_{key}")
+        _line(lines, f"cs-t2 = ResourceBoneStatic_{key}")
+        _line(lines, f"cs-u0 = ResourceBonePalette_{key}_UAV")
+        _line(lines, "run = CustomShader_UpdateBonePaletteTQ")
+        _line(lines, f"ResourceBonePalette_{key} = copy ResourceBonePalette_{key}_UAV")
+        _line(lines, f"cs-u0 = ResourceFakeCB1_{key}_UAV")
+        _line(lines, "cs-t0 = ResourceDumpedCB1_SRV")
+        _line(lines, f"cs-t2 = ResourceBoneStatic_{key}")
         if str(draw_part.get("cb1_profile", "") or "").upper() == "EYELASH":
-            _line(lines, "    cs-t3 = ResourceCB1Flag_Eyelash")
+            _line(lines, "cs-t3 = ResourceCB1Flag_Eyelash")
         else:
-            _line(lines, "    cs-t3 = null")
-        _line(lines, "    dispatch = 4, 1, 1")
-        _line(lines, "    run = CustomShader_RedirectCB1LocalPalette")
-        _line(lines, "    cs-t0 = null")
-        _line(lines, "    cs-t3 = null")
-        _line(lines, f"    ResourceFakeCB1_{key} = copy ResourceFakeCB1_{key}_UAV")
-        _line(lines, f"    vs-t0 = ResourceBonePalette_{key}")
-        _line(lines, f"    vs-cb1 = ResourceFakeCB1_{key}")
+            _line(lines, "cs-t3 = null")
+        _line(lines, "run = CustomShader_RedirectCB1LocalPalette")
+        _line(lines, f"ResourceFakeCB1_{key} = copy ResourceFakeCB1_{key}_UAV")
+        _line(lines, f"vs-t0 = ResourceBonePalette_{key}")
+        _line(lines, f"vs-cb1 = ResourceFakeCB1_{key}")
     if geometry_record is not None:
-        _line(lines, f"    ib = ref ResourceGeometryIndex_{geometry_suffix}")
+        _line(lines, f"ib = ref ResourceGeometryIndex_{geometry_suffix}")
         for slot_name, _vertex_buffer in sorted(geometry_vertex_buffers.items(), key=lambda item: item[0]):
             slot = str(slot_name or "").lower()
             if slot == "vb0" and morph_payload is not None and use_runtime_morph_vb:
-                _line(lines, f"    vb0 = ref ResourceMorphRuntimeVB_{key}")
+                _line(lines, f"vb0 = ref ResourceMorphRuntimeVB_{key}")
             else:
-                _line(lines, f"    {slot} = ref ResourceGeometry_{geometry_suffix}_{slot}")
+                _line(lines, f"{slot} = ref ResourceGeometry_{geometry_suffix}_{slot}")
         if "vb0" in geometry_vertex_buffers and "vb3" not in geometry_vertex_buffers:
             if morph_payload is not None and use_runtime_morph_vb:
-                _line(lines, f"    vb3 = ref ResourceMorphRuntimeVB_{key}")
+                _line(lines, f"vb3 = ref ResourceMorphRuntimeVB_{key}")
             else:
-                _line(lines, f"    vb3 = ref ResourceGeometry_{geometry_suffix}_vb0")
+                _line(lines, f"vb3 = ref ResourceGeometry_{geometry_suffix}_vb0")
         index_buffer = dict(geometry_record.get("index_buffer", {}) or {})
         index_count = int(index_buffer.get("index_count", geometry_record.get("index_count", 0)) or 0)
-        _line(lines, f"    drawindexedinstanced = {index_count},INSTANCE_COUNT,0,0,FIRST_INSTANCE")
+        _line(lines, f"drawindexedinstanced = {index_count},INSTANCE_COUNT,0,0,FIRST_INSTANCE")
     elif morph_payload is not None:
-        _line(lines, f"    vb0 = ref ResourceMorphRuntimeVB_{key}")
-        _line(lines, f"    vb3 = ref ResourceMorphRuntimeVB_{key}")
-    _line(lines, "endif")
+        _line(lines, f"vb0 = ref ResourceMorphRuntimeVB_{key}")
+        _line(lines, f"vb3 = ref ResourceMorphRuntimeVB_{key}")
     _line(lines)
 
 
@@ -374,6 +378,7 @@ def write_runtime_ini_from_manifest(output_directory: str, clip_name: str) -> st
 
 
 HLSL_FILES = {
+    "rx_anim_coordinate_contract.hlsli": hlsl_coordinate_contract(),
     "extract_cb1_vs.hlsl": r"""struct V2P
 {
     float4 pos : SV_Position;
@@ -670,12 +675,13 @@ float RxSampleMorphWeight(uint channel_index, uint sample_a, uint sample_b, floa
 #endif
 """,
     "update_bone_palette_tq_cs.hlsl": r"""#include "rx_anim_sampling.hlsli"
+#include "rx_anim_coordinate_contract.hlsli"
 
 StructuredBuffer<float4> BoneAnim : register(t0);
 StructuredBuffer<float4> BoneBind : register(t1);
 StructuredBuffer<uint4> BoneStatic : register(t2);
-StructuredBuffer<uint4> MasterPlayback : register(t3);
 RWStructuredBuffer<float4> BonePalette : register(u0);
+RWStructuredBuffer<uint4> MasterPlayback : register(u1);
 
 float4 QuatNormalize(float4 q)
 {
@@ -731,13 +737,6 @@ void MultiplyAffineRows(
         dot(l2.xyz, float3(r0.z, r1.z, r2.z)),
         dot(l2.xyz, float3(r0.w, r1.w, r2.w)) + l2.w
     );
-}
-
-void ConvertSkinRowsFromBlenderToGame(float4 blender0, float4 blender1, float4 blender2, out float4 game0, out float4 game1, out float4 game2)
-{
-    game0 = blender0;
-    game1 = blender2;
-    game2 = -blender1;
 }
 
 float4 BuildIdentityRow(uint row_index)
@@ -802,7 +801,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     MultiplyAffineRows(pose0, pose1, pose2, b0, b1, b2, skin0, skin1, skin2);
 
     float4 out0, out1, out2;
-    ConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
+    RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
 
     uint slot_id = LoadSlotId(bone_index);
     uint row_base = reserved_rows + slot_id * 3;
@@ -832,7 +831,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     q = QuatNlerp(qa, qb, alpha);
     BuildPoseRows(t, q, pose0, pose1, pose2);
     MultiplyAffineRows(pose0, pose1, pose2, b0, b1, b2, skin0, skin1, skin2);
-    ConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
+    RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, out0, out1, out2);
     BonePalette[previous_base + row_base + 0] = out0;
     BonePalette[previous_base + row_base + 1] = out1;
     BonePalette[previous_base + row_base + 2] = out2;
@@ -865,6 +864,9 @@ void main(uint3 id : SV_DispatchThreadID)
     if (block_row == 5u)
     {
         uint4 static_header1 = BoneStatic[1];
+        // Match the native/YV contract: cb1 points to the start of the palette
+        // window, including its reserved identity rows. The game VS applies its
+        // own reserved-row addressing when reading blend-index matrices.
         cb_data.x = 0u;
         cb_data.y = static_header1.y;
     }

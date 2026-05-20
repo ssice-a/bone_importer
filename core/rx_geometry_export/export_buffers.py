@@ -12,6 +12,13 @@ from .texcoord_attrs import texcoord_color_attr_names, texcoord_component_attr_n
 from .export_package import ExportPartPlan, write_r32_index_buffer
 from .numpy_buffers import assign_bytes, foreach_get_array, object_attribute_array
 from .uv_transform import DEFAULT_UV_FLIP_V
+from ..coordinate_contract import (
+    bitangent_sign_needs_flip,
+    mirror_x_array,
+    mirror_x_vector,
+    resolve_object_mirror_x,
+    resolve_object_uv_flip_v,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +142,7 @@ class _ExportPartCache:
                 mesh=mesh_record.mesh,
                 group_index_to_global=_group_index_to_global(mesh_obj),
                 mirror_flip=_object_mirror_flip(mesh_obj, self.mirror_flip_default),
-                uv_flip_v=self.uv_flip_v_default,
+                uv_flip_v=_object_uv_flip(mesh_obj, self.uv_flip_v_default),
                 matrix_world_applied=mesh_record.matrix_world_applied,
                 vertex_position_values=None,
                 loop_normal_values=None,
@@ -1164,7 +1171,7 @@ def _game_position(loop_vertex: _LoopVertex, export_cache: _ExportPartCache) -> 
     if not mesh_cache.matrix_world_applied:
         co = _transform_point(loop_vertex.mesh_obj, co)
     if mesh_cache.mirror_flip:
-        co = (-co[0], co[1], co[2])
+        co = mirror_x_vector(co)
     mesh_cache.game_position_by_vertex[loop_vertex.vertex_index] = co
     return co
 
@@ -1183,7 +1190,7 @@ def _game_normal(loop_vertex: _LoopVertex, export_cache: _ExportPartCache) -> tu
         if not mesh_cache.matrix_world_applied:
             normal = _transform_normal(loop_vertex.mesh_obj, normal)
         if mesh_cache.mirror_flip:
-            normal = (-normal[0], normal[1], normal[2])
+            normal = mirror_x_vector(normal)
         normal = _normalize3(normal)
     mesh_cache.game_normal_by_loop[loop_vertex.loop_index] = normal
     return normal
@@ -1267,8 +1274,7 @@ def _game_position_values(mesh, mesh_cache: _MeshExportCache) -> list[tuple[floa
     if not mesh_cache.matrix_world_applied:
         positions = _transform_points_numpy(mesh_cache.mesh_obj, positions)
     if mesh_cache.mirror_flip:
-        positions = positions.copy()
-        positions[:, 0] *= -1.0
+        positions = mirror_x_array(positions)
     mesh_cache.game_position_values = positions
     return positions
 
@@ -1282,8 +1288,7 @@ def _game_normal_values(mesh, mesh_cache: _MeshExportCache) -> list[tuple[float,
     if not mesh_cache.matrix_world_applied:
         normals = _transform_normals_numpy(mesh_cache.mesh_obj, normals)
     if mesh_cache.mirror_flip:
-        normals = normals.copy()
-        normals[:, 0] *= -1.0
+        normals = mirror_x_array(normals)
     lengths = np.linalg.norm(normals, axis=1, keepdims=True)
     lengths = np.where(lengths <= 1e-12, 1.0, lengths)
     normals = normals / lengths
@@ -1316,8 +1321,7 @@ def _game_tangent_values(mesh, mesh_cache: _MeshExportCache) -> list[tuple[float
     if not mesh_cache.matrix_world_applied:
         tangents = _transform_normals_numpy(mesh_cache.mesh_obj, tangents)
     if mesh_cache.mirror_flip:
-        tangents = tangents.copy()
-        tangents[:, 0] *= -1.0
+        tangents = mirror_x_array(tangents)
     lengths = np.linalg.norm(tangents, axis=1, keepdims=True)
     lengths = np.where(lengths <= 1e-12, 1.0, lengths)
     tangents = tangents / lengths
@@ -1329,7 +1333,7 @@ def _game_bitangent_sign_values(mesh, mesh_cache: _MeshExportCache) -> list[floa
     if mesh_cache.game_bitangent_sign_values is not None:
         return mesh_cache.game_bitangent_sign_values
     values = _loop_bitangent_sign_values(mesh, mesh_cache)
-    flip_sign = bool(mesh_cache.mirror_flip) ^ bool(mesh_cache.uv_flip_v)
+    flip_sign = bitangent_sign_needs_flip(mirror_x=mesh_cache.mirror_flip, uv_flip_v=mesh_cache.uv_flip_v)
     np = require_numpy()
     signs = np.asarray(values, dtype=np.float32)
     if flip_sign:
@@ -1827,23 +1831,12 @@ def _point_attribute_value(mesh, names: tuple[str, ...], vertex_index: int, mesh
     return None
 
 
-def _object_get(obj, key: str, default=None):
-    getter = getattr(obj, "get", None)
-    if callable(getter):
-        return getter(key, default)
-    try:
-        return obj[key]
-    except Exception:
-        return default
-
-
 def _object_mirror_flip(obj, default: bool) -> bool:
-    value = _object_get(obj, "bmc_mirror_flip", None)
-    if value is None:
-        value = _object_get(obj, "modimp_mirror_flip", None)
-    if value is None:
-        return bool(default)
-    return bool(value)
+    return resolve_object_mirror_x(obj, default)
+
+
+def _object_uv_flip(obj, default: bool) -> bool:
+    return resolve_object_uv_flip_v(obj, default)
 
 
 def _evaluated_export_mesh(mesh_obj) -> tuple[object | None, bool, object | None]:

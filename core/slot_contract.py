@@ -8,6 +8,8 @@ import re
 
 import bpy
 
+from .coordinate_contract import resolve_object_mirror_x
+
 
 INVALID_SLOT_ID = 0xFFFFFFFF
 SLOT_NAME_RE = re.compile(r"^\s*(?P<slot>\d+)(?:__(?P<suffix>.*))?\s*$")
@@ -173,6 +175,128 @@ def _find_source_bone_for_slot(source_armature, draw_part, slot_id: int) -> str:
     return ""
 
 
+def _vertex_group_slot_centroids(obj, slot_ids: tuple[int, ...]) -> dict[int, object]:
+    if obj is None or getattr(obj, "type", "") != "MESH":
+        return {}
+    try:
+        from mathutils import Vector
+    except Exception:
+        return {}
+
+    wanted = {int(slot_id) for slot_id in slot_ids}
+    group_indices_by_slot: dict[int, set[int]] = {}
+    for vertex_group in getattr(obj, "vertex_groups", []) or ():
+        try:
+            slot_id = parse_slot_id(vertex_group.name)
+        except ValueError:
+            continue
+        if slot_id not in wanted:
+            continue
+        group_indices_by_slot.setdefault(slot_id, set()).add(int(vertex_group.index))
+
+    if not group_indices_by_slot:
+        return {}
+
+    matrix_world = getattr(obj, "matrix_world", None)
+    centroids = {}
+    vertices = getattr(getattr(obj, "data", None), "vertices", []) or ()
+    for slot_id, group_indices in group_indices_by_slot.items():
+        total_weight = 0.0
+        weighted_sum = Vector((0.0, 0.0, 0.0))
+        for vertex in vertices:
+            weight = 0.0
+            for group_element in getattr(vertex, "groups", []) or ():
+                if int(group_element.group) in group_indices:
+                    weight += float(group_element.weight)
+            if weight <= 0.0:
+                continue
+            co = vertex.co
+            if matrix_world is not None:
+                co = matrix_world @ co
+            weighted_sum += co * weight
+            total_weight += weight
+        if total_weight > 1e-8:
+            centroids[slot_id] = weighted_sum / total_weight
+    return centroids
+
+
+def _centroid_bounds_diagonal(centroids: dict[int, object]) -> float:
+    if not centroids:
+        return 0.0
+    values = list(centroids.values())
+    min_x = min(float(value.x) for value in values)
+    min_y = min(float(value.y) for value in values)
+    min_z = min(float(value.z) for value in values)
+    max_x = max(float(value.x) for value in values)
+    max_y = max(float(value.y) for value in values)
+    max_z = max(float(value.z) for value in values)
+    dx = max_x - min_x
+    dy = max_y - min_y
+    dz = max_z - min_z
+    return float((dx * dx + dy * dy + dz * dz) ** 0.5)
+
+
+def _should_mirror_imported_numeric_slots(draw_part, slot_contract: SlotContract) -> bool:
+    if slot_contract.source != "target_numeric_groups":
+        return False
+    if str(getattr(draw_part, "bone_slot_map_json", "") or "").strip():
+        return False
+    source_object = getattr(draw_part, "source_object", None)
+    if not resolve_object_mirror_x(source_object, False):
+        return False
+    return True
+
+
+def _build_import_mirror_slot_map(draw_part, slot_contract: SlotContract) -> dict[int, int]:
+    """Map target game slots to mirrored Blender proxy slots.
+
+    Imported game meshes are mirrored on Blender X for editing. Their numeric
+    vertex-group ids still belong to the unmirrored game slot namespace, so a
+    native game slot on one side must sample the proxy bone from the mirrored
+    side. Explicit Slot Map entries are left untouched; this only affects the
+    automatic Target Numeric Groups route.
+    """
+
+    if not _should_mirror_imported_numeric_slots(draw_part, slot_contract):
+        return {}
+
+    centroids = _vertex_group_slot_centroids(getattr(draw_part, "source_object", None), slot_contract.slot_ids)
+    if len(centroids) <= 1:
+        return {}
+
+    diagonal = _centroid_bounds_diagonal(centroids)
+    max_distance = max(0.025, diagonal * 0.045)
+    candidates = []
+    for target_slot, target_centroid in centroids.items():
+        mirrored_x = -float(target_centroid.x)
+        mirrored_y = float(target_centroid.y)
+        mirrored_z = float(target_centroid.z)
+        for source_slot, source_centroid in centroids.items():
+            dx = float(source_centroid.x) - mirrored_x
+            dy = float(source_centroid.y) - mirrored_y
+            dz = float(source_centroid.z) - mirrored_z
+            distance = float((dx * dx + dy * dy + dz * dz) ** 0.5)
+            candidates.append((distance, int(target_slot), int(source_slot)))
+
+    candidates.sort(key=lambda item: item[0])
+    used_targets = set()
+    used_sources = set()
+    mapping: dict[int, int] = {}
+    for distance, target_slot, source_slot in candidates:
+        if target_slot in used_targets or source_slot in used_sources:
+            continue
+        if target_slot != source_slot and distance > max_distance:
+            continue
+        used_targets.add(target_slot)
+        used_sources.add(source_slot)
+        mapping[target_slot] = source_slot
+
+    return {
+        int(slot_id): int(mapping.get(int(slot_id), int(slot_id)))
+        for slot_id in slot_contract.slot_ids
+    }
+
+
 def _parse_explicit_slot_map(draw_part, fallback_armature) -> tuple[BoneSlotBinding, ...]:
     raw_json = str(getattr(draw_part, "bone_slot_map_json", "") or "").strip()
     if not raw_json:
@@ -220,6 +344,7 @@ def resolve_bone_slot_bindings(draw_part, require_complete: bool = True) -> tupl
     source_armature = getattr(draw_part, "bone_source_armature", None) or getattr(draw_part, "proxy_armature", None)
     explicit_bindings = _parse_explicit_slot_map(draw_part, source_armature)
     explicit_by_slot = {binding.slot_id: binding for binding in explicit_bindings}
+    mirror_slot_map = _build_import_mirror_slot_map(draw_part, slot_contract)
 
     bindings = []
     missing_slots = []
@@ -228,7 +353,8 @@ def resolve_bone_slot_bindings(draw_part, require_complete: bool = True) -> tupl
         if explicit_binding is not None:
             bindings.append(explicit_binding)
             continue
-        source_bone = _find_source_bone_for_slot(source_armature, draw_part, slot_id)
+        source_slot_id = mirror_slot_map.get(int(slot_id), int(slot_id))
+        source_bone = _find_source_bone_for_slot(source_armature, draw_part, source_slot_id)
         if not source_bone:
             missing_slots.append(slot_id)
             continue

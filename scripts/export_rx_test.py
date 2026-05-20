@@ -19,7 +19,12 @@ import bpy
 REPO_PARENT = r"E:\vscode"
 DEFAULT_OUTPUT_DIR = r"E:\XXMI\EFMI\Mods\RX"
 OUTPUT_DIR = os.environ.get("RX_EXPORT_OUTPUT_DIR", DEFAULT_OUTPUT_DIR)
-BMC_CAPTURE_MANIFEST = r"E:\XXMI\EFMI\Mods\lxi\capture_manifest.json"
+BMC_CAPTURE_MANIFEST_CANDIDATES = (
+    os.environ.get("RX_BMC_CAPTURE_MANIFEST", ""),
+    r"E:\XXMI\EFMI\Mods\DISABLEDlxi\capture_manifest.json",
+    r"E:\XXMI\EFMI\Mods\lev\capture_manifest.json",
+    r"E:\XXMI\EFMI\Mods\lxi\capture_manifest.json",
+)
 DEFAULT_FRAME_START = 0
 DEFAULT_FRAME_END = 5670
 DEFAULT_FRAME_STEP = 1
@@ -58,6 +63,28 @@ def _write_json(path: str, payload: dict):
     with open(path, "w", encoding="utf-8", newline="\n") as json_file:
         json.dump(payload, json_file, indent=2, ensure_ascii=False)
         json_file.write("\n")
+
+
+def _resolve_bmc_capture_manifest() -> str:
+    required_layouts = set(REPLACEMENT_GEOMETRY)
+    existing_candidates = []
+    for candidate in BMC_CAPTURE_MANIFEST_CANDIDATES:
+        if not candidate or not os.path.exists(candidate):
+            continue
+        existing_candidates.append(candidate)
+        try:
+            with open(candidate, "r", encoding="utf-8") as manifest_file:
+                manifest = json.load(manifest_file)
+        except Exception:
+            continue
+        vertex_layout_table = dict(manifest.get("vertex_layout_table", {}) or {})
+        if required_layouts.issubset(set(vertex_layout_table)):
+            return candidate
+    searched = ", ".join(existing_candidates or [candidate for candidate in BMC_CAPTURE_MANIFEST_CANDIDATES if candidate])
+    raise RuntimeError(
+        "Missing BMC capture_manifest.json with required vertex layouts "
+        f"{sorted(required_layouts)}; searched: {searched}"
+    )
 
 
 def _seconds(value) -> str:
@@ -145,6 +172,16 @@ def _print_export_performance(perf_report: dict):
         f"required_objects={sample_isolation.get('required_object_count', 0)} "
         f"setup={_seconds(sample_isolation.get('seconds'))} "
         f"restore={_seconds(sample_isolation.get('restore_seconds'))}"
+    )
+    static_bonex_driver_mute = dict(bone_perf.get("static_bonex_driver_mute", {}) or {})
+    print(
+        "Static Bonex driver mute: "
+        f"enabled={bool(static_bonex_driver_mute.get('enabled', False))} "
+        f"reason={static_bonex_driver_mute.get('skip_reason', '')} "
+        f"static_constraints={static_bonex_driver_mute.get('static_constraint_count', 0)} "
+        f"muted={static_bonex_driver_mute.get('muted_constraint_count', 0)} "
+        f"setup={_seconds(static_bonex_driver_mute.get('seconds'))} "
+        f"restore={_seconds(static_bonex_driver_mute.get('restore_seconds'))}"
     )
     for group in bone_perf.get("sample_groups", []) or []:
         cache_state = "hit" if group.get("cache_hit") else "miss"
@@ -262,7 +299,7 @@ def _export_geometry_with_rx(runtime_targets: dict):
         context=bpy.context,
         source_collection=root,
         output_dir=OUTPUT_DIR,
-        capture_manifest_path=BMC_CAPTURE_MANIFEST,
+        capture_manifest_path=_resolve_bmc_capture_manifest(),
     )
     with open(result["manifest_path"], "r", encoding="utf-8") as manifest_file:
         bmc_manifest = json.load(manifest_file)

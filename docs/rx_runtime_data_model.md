@@ -76,11 +76,17 @@ The Runtime Coordinate Contract is the single rule set that keeps replacement ge
 Current RX contract:
 
 ```text
-name = RX_RUNTIME_MIRROR_X_VFLIP
+name = RX_RUNTIME_YV_AXIS
 position / normal / tangent = mirror Blender X into game X
 UV = flip V by default
 bitangent sign = flip when exactly one of mirror-X or flip-V is active
-skin matrix rows = Sx * blender_skin * Sx
+skin matrix rows = YV row mapping:
+    YV/EFMI axis conversion itself is not a mirror.
+    RX-imported geometry is mirrored on Blender X, but that belongs to slot
+    binding remap, not the palette row axis conversion.
+    game_row_0 =  blender_row_0
+    game_row_1 =  blender_row_2
+    game_row_2 = -blender_row_1
 ```
 
 The Python truth source is:
@@ -89,7 +95,7 @@ The Python truth source is:
 core/coordinate_contract.py
 ```
 
-Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module.
+Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, mirrored slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror, while the RX imported mesh mirror is a separate importer/exporter convention handled by the exporter when binding target slots to source proxy bones.
 
 ## Animation Bank Control
 

@@ -22,6 +22,12 @@ from .animation_export import (
     write_json_file,
     write_uint4_buffer_rows,
 )
+from .coordinate_contract import (
+    bitangent_sign_needs_flip,
+    mirror_x_vector,
+    resolve_object_mirror_x,
+    resolve_object_uv_flip_v,
+)
 
 
 MORPH_FLAG_HAS_POSITION_DELTAS = 1 << 0
@@ -495,7 +501,13 @@ def _build_theherta_like_unique_loop_indices(evaluated_mesh):
     return tuple(representative_loop_indices)
 
 
-def _capture_unique_vertex_targets(evaluated_mesh, representative_loop_indices):
+def _capture_unique_vertex_targets(
+    evaluated_mesh,
+    representative_loop_indices,
+    *,
+    mirror_x: bool = True,
+    uv_flip_v: bool = True,
+):
     """Capture one position + packed normal + tangent target for each exported unique vertex."""
     has_tangent_data = False
     if len(evaluated_mesh.uv_layers) > 0:
@@ -511,24 +523,28 @@ def _capture_unique_vertex_targets(evaluated_mesh, representative_loop_indices):
     for loop_index in representative_loop_indices:
         loop = evaluated_mesh.loops[loop_index]
         vertex = evaluated_mesh.vertices[loop.vertex_index]
-        unique_positions.append((float(vertex.co.x), float(vertex.co.y), float(vertex.co.z)))
+        position = (float(vertex.co.x), float(vertex.co.y), float(vertex.co.z))
+        normal = (float(loop.normal.x), float(loop.normal.y), float(loop.normal.z))
         tangent = loop.tangent if has_tangent_data else (0.0, 0.0, 0.0)
+        tangent = (float(tangent[0]), float(tangent[1]), float(tangent[2]))
         bitangent_sign = float(loop.bitangent_sign) if has_tangent_data else 1.0
+        if mirror_x:
+            position = mirror_x_vector(position)
+            normal = mirror_x_vector(normal)
+            tangent = mirror_x_vector(tangent)
+        if bitangent_sign_needs_flip(mirror_x=mirror_x, uv_flip_v=uv_flip_v):
+            bitangent_sign *= -1.0
+        unique_positions.append(position)
         unique_normals.append(
             encode_normal_to_efmi_packed_uint(
-                loop.normal,
+                normal,
                 tangent,
                 bitangent_sign,
+                flip_texcoord_v=False,
+                flip_bitangent_sign=False,
             )
         )
-        unique_tangents.append(
-            (
-                float(tangent[0]),
-                float(tangent[1]),
-                float(tangent[2]),
-                float(bitangent_sign),
-            )
-        )
+        unique_tangents.append((tangent[0], tangent[1], tangent[2], float(bitangent_sign)))
     return tuple(unique_positions), tuple(unique_normals), tuple(unique_tangents)
 
 
@@ -1021,6 +1037,9 @@ def export_morph_mesh_for_proxy_armature(
                 exported_channel_names,
                 baked_shape_key_values,
             )
+            coordinate_source = getattr(draw_part, "source_object", None) or source_mesh
+            mirror_x = resolve_object_mirror_x(coordinate_source, True)
+            uv_flip_v = resolve_object_uv_flip_v(coordinate_source, True)
 
             scene.frame_set(exported_frames[0])
             _set_shape_key_values(source_mesh, baked_shape_key_values)
@@ -1100,6 +1119,8 @@ def export_morph_mesh_for_proxy_armature(
                 positions_at_zero, packed_normals_at_zero, tangents_at_zero = _capture_unique_vertex_targets(
                     zero_mesh,
                     representative_loop_indices,
+                    mirror_x=mirror_x,
+                    uv_flip_v=uv_flip_v,
                 )
             for channel_name in exported_channel_names:
                 channel_values = dict(all_zero_values)
@@ -1110,6 +1131,8 @@ def export_morph_mesh_for_proxy_armature(
                     positions_at_one, packed_normals_at_one, tangents_at_one = _capture_unique_vertex_targets(
                         target_mesh,
                         representative_loop_indices,
+                        mirror_x=mirror_x,
+                        uv_flip_v=uv_flip_v,
                     )
                 delta_positions = _subtract_positions(positions_at_one, positions_at_zero)
                 virtual_packed_normals = _build_virtual_packed_normals(
