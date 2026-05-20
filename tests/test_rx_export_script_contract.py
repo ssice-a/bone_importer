@@ -35,6 +35,19 @@ class RxExportScriptContractTests(unittest.TestCase):
         self.assertFalse(eyelash["uv_mirror_u"])
         self.assertTrue(eyelash["uv_flip_v"])
 
+    def test_replacement_morph_sources_are_explicit(self):
+        replacement_geometry = _replacement_geometry_literal()
+
+        self.assertEqual(replacement_geometry["e78c7068-10590-0"]["morph_source_object"], "000_面")
+        self.assertEqual(replacement_geometry["2009f0d6-1356-0"]["morph_source_object"], "005_睫眉")
+
+    def test_geometry_draw_part_overwrites_stale_morph_source(self):
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('morph_source_name = str(config.get("morph_source_object", "") or "").strip()', source)
+        self.assertIn("target.bi_morph_source_object = morph_source_object", source)
+        self.assertNotIn('if getattr(target, "bi_morph_source_object", None) is None:', source)
+
 
 if __name__ == "__main__":
     unittest.main()

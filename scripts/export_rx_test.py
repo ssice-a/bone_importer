@@ -40,6 +40,7 @@ GEOMETRY_EXPORT_COLLECTION_NAME = "RX Geometry Export Current"
 REPLACEMENT_GEOMETRY = {
     "e78c7068-10590-0": {
         "geometry_object": "RXEXP_e78c7068-10590-0_000_\u9762.001",
+        "morph_source_object": "000_\u9762",
         "vb_profile": "PACKED16",
         "cb1": "NONE",
         "mirror_flip": True,
@@ -48,6 +49,7 @@ REPLACEMENT_GEOMETRY = {
     },
     "2009f0d6-1356-0": {
         "geometry_object": "RXEXP_2009f0d6-1356-0_005_\u776b\u7709.001",
+        "morph_source_object": "005_\u776b\u7709",
         "vb_profile": "PNTA40",
         "cb1": "EYELASH",
         "mirror_flip": True,
@@ -355,10 +357,13 @@ def _configure_geometry_draw_part(target, config, geometry_record, geometry_obje
     vb0_record = dict(geometry_record.get("vertex_buffers", {}).get("vb0", {}) or {})
     if not vb0_record.get("file_path"):
         raise RuntimeError(f"{target.name}: BMC geometry export has no vb0 Position buffer")
+    morph_source_name = str(config.get("morph_source_object", "") or "").strip()
+    morph_source_object = bpy.data.objects.get(morph_source_name) if morph_source_name else geometry_object
+    if morph_source_object is None or morph_source_object.type != "MESH":
+        raise RuntimeError(f"{target.name}: morph source mesh not found: {morph_source_name}")
 
     target.bi_morph_enabled = True
-    if getattr(target, "bi_morph_source_object", None) is None:
-        target.bi_morph_source_object = geometry_object
+    target.bi_morph_source_object = morph_source_object
     target.bi_base_position_path = vb0_record["file_path"]
     target.bi_base_position_stride = int(vb0_record.get("stride", 0) or 0)
     target.bi_vb_layout_profile = config["vb_profile"]
