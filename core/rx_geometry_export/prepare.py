@@ -9,6 +9,7 @@ from .export_buffers import write_part_geometry_buffers
 from .export_package import BI4_MAX_BONE_COUNT, build_export_plan, write_part_palette_files
 from .io import ensure_directory, read_json, write_json
 from .vertex_groups import collect_weighted_numeric_vertex_groups
+from ..coordinate_contract import resolve_object_mirror_x, resolve_object_uv_mirror_u, resolve_object_uv_flip_v
 
 
 BUFFER_EXPORT_DIR_NAME = "Buffer"
@@ -53,20 +54,25 @@ def prepare_geometry_export_collection(
     timings["palettes"] = time.perf_counter() - stage_start
 
     stage_start = time.perf_counter()
+    mirror_flip_default = bool(getattr(context.scene, "bmc_mirror_flip", True))
+    uv_mirror_u_default = bool(getattr(context.scene, "bmc_uv_mirror_u", False))
+    uv_flip_v_default = bool(getattr(context.scene, "bmc_uv_flip_v", True))
     geometry_records = write_part_geometry_buffers(
         buffer_dir,
         export_plan.parts,
         dict(capture_manifest.get("vertex_layout_table", {}) or {}),
-        mirror_flip_default=bool(getattr(context.scene, "bmc_mirror_flip", True)),
-        uv_mirror_u_default=bool(getattr(context.scene, "bmc_uv_mirror_u", False)),
-        uv_flip_v_default=bool(getattr(context.scene, "bmc_uv_flip_v", True)),
+        mirror_flip_default=mirror_flip_default,
+        uv_mirror_u_default=uv_mirror_u_default,
+        uv_flip_v_default=uv_flip_v_default,
     )
     timings["geometry"] = time.perf_counter() - stage_start
 
     stage_start = time.perf_counter()
     object_records = []
     for part in export_plan.parts:
+        mesh_by_name = {mesh_obj.name: mesh_obj for mesh_obj in part.mesh_objects}
         for usage in part.object_usages:
+            mesh_obj = mesh_by_name.get(usage.name)
             object_records.append(
                 {
                     "object": usage.name,
@@ -79,6 +85,11 @@ def prepare_geometry_export_collection(
                     "palette_file": part.palette_file_name,
                     "local_bone_count": len(part.palette_values),
                     "used_global_groups": list(usage.used_global_groups),
+                    "coordinate_contract": {
+                        "mirror_flip": resolve_object_mirror_x(mesh_obj, mirror_flip_default),
+                        "uv_mirror_u": resolve_object_uv_mirror_u(mesh_obj, uv_mirror_u_default),
+                        "uv_flip_v": resolve_object_uv_flip_v(mesh_obj, uv_flip_v_default),
+                    },
                 }
             )
 
@@ -90,9 +101,9 @@ def prepare_geometry_export_collection(
         "palettes": palette_records,
         "geometry_buffers": _public_geometry_records(geometry_records),
         "export_options": {
-            "mirror_flip": bool(getattr(context.scene, "bmc_mirror_flip", True)),
-            "uv_mirror_u": bool(getattr(context.scene, "bmc_uv_mirror_u", False)),
-            "uv_flip_v": bool(getattr(context.scene, "bmc_uv_flip_v", True)),
+            "mirror_flip": mirror_flip_default,
+            "uv_mirror_u": uv_mirror_u_default,
+            "uv_flip_v": uv_flip_v_default,
             "max_bones_per_part": int(max_bones_per_part),
         },
         "objects": object_records,
