@@ -27,6 +27,7 @@ from .animation_export import (
 from .models import AnimationExportResult
 from .slot_contract import resolve_bone_slot_bindings, serialize_slot_bindings
 from .coordinate_contract import RX_BONE_PAYLOAD_FLAG_MIRROR_X, resolve_object_mirror_x
+from .proxy import capture_proxy_bind_matrices
 from .transform import BUFFER_CORRECTION_NONE, build_extra_blender_correction_matrix, get_proxy_buffer_correction_mode
 from .layout import build_matrix_from_flat_values, convert_matrix_to_palette_rows
 
@@ -34,6 +35,7 @@ from .layout import build_matrix_from_flat_values, convert_matrix_to_palette_row
 BONE_PAYLOAD_FLAGS_NONE = 0
 TQ_FLOATS_PER_BONE = 8
 BONE_SAMPLE_CACHE_VERSION = "rx_bone_sample_cache_v3"
+BIND_REST_STALE_EPSILON = 1e-4
 
 
 def resolve_bone_payload_paths(output_directory: str, draw_key: str):
@@ -96,6 +98,73 @@ def _resolve_bind_matrix(pose_bone):
         except Exception:
             pass
     return pose_bone.bone.matrix_local.copy()
+
+
+def _flat_matrix_rest_delta(flat_matrix, rest_matrix) -> float:
+    values = list(flat_matrix or ())
+    if len(values) < 16:
+        return float("inf")
+    return max(
+        abs(float(values[row * 4 + column]) - float(rest_matrix[row][column]))
+        for row in range(4)
+        for column in range(4)
+    )
+
+
+def _pose_bone_bind_rest_delta(pose_bone) -> float:
+    if not bool(getattr(pose_bone, "bi_bind_valid", False)):
+        return float("inf")
+    return _flat_matrix_rest_delta(
+        getattr(pose_bone, "bi_bind_matrix", ()),
+        pose_bone.bone.matrix_local,
+    )
+
+
+def _auto_refresh_stale_proxy_binds(context, prepared_payloads, threshold: float = BIND_REST_STALE_EPSILON):
+    """Refresh proxy bind matrices when current rest no longer matches cached bind."""
+
+    start = perf_counter()
+    armatures = {}
+    stale_by_armature = {}
+    for payload in prepared_payloads:
+        draw_key = str(getattr(payload.get("draw_part"), "draw_key", "") or payload.get("draw_key", ""))
+        for binding, pose_bone in payload.get("binding_pose_bones", ()) or ():
+            source_armature = binding.source_armature
+            if not bool(getattr(source_armature, "bi_is_proxy_armature", False)):
+                continue
+            delta = _pose_bone_bind_rest_delta(pose_bone)
+            if delta <= float(threshold):
+                continue
+            armatures[source_armature.name] = source_armature
+            stale_by_armature.setdefault(source_armature.name, []).append(
+                {
+                    "draw_key": draw_key,
+                    "bone": pose_bone.name,
+                    "slot_id": int(getattr(pose_bone, "bi_slot_id", -1)),
+                    "delta": float(delta),
+                }
+            )
+
+    refreshed = {}
+    for armature_name, armature in sorted(armatures.items()):
+        refreshed[armature_name] = int(capture_proxy_bind_matrices(armature))
+    if refreshed and context is not None:
+        context.view_layer.update()
+
+    stale_samples = {}
+    for armature_name, rows in stale_by_armature.items():
+        rows = sorted(rows, key=lambda item: item["delta"], reverse=True)
+        stale_samples[armature_name] = rows[:16]
+
+    return {
+        "enabled": True,
+        "threshold": float(threshold),
+        "stale_armature_count": len(stale_by_armature),
+        "stale_bone_count": sum(len(rows) for rows in stale_by_armature.values()),
+        "refreshed_armatures": refreshed,
+        "stale_samples": stale_samples,
+        "seconds": perf_counter() - start,
+    }
 
 
 def _iter_binding_pose_bones(bindings):
@@ -292,6 +361,15 @@ def export_bone_payload_for_draw_part(
     correction_mode, correction_matrix = _binding_correction_matrix(draw_part)
     payload_flags = _bone_payload_flags(draw_part)
     frame_buffer = array("f", [0.0]) * (len(binding_pose_bones) * TQ_FLOATS_PER_BONE)
+    bind_auto_refresh = _auto_refresh_stale_proxy_binds(
+        context,
+        (
+            {
+                "draw_part": draw_part,
+                "binding_pose_bones": binding_pose_bones,
+            },
+        ),
+    )
 
     scene = context.scene
     original_frame = scene.frame_current
@@ -322,6 +400,7 @@ def export_bone_payload_for_draw_part(
         correction_mode,
         payload_flags,
     )
+    metadata["bind_auto_refresh"] = bind_auto_refresh
     if write_metadata:
         write_json_file(bone_metadata_path, metadata)
     else:
@@ -786,6 +865,9 @@ def export_bone_payloads_for_draw_parts(
             continue
     timings["prepare_payloads_seconds"] = perf_counter() - prepare_start
 
+    bind_auto_refresh = _auto_refresh_stale_proxy_binds(context, prepared_payloads)
+    timings["bind_auto_refresh_seconds"] = float(bind_auto_refresh.get("seconds", 0.0))
+
     sample_group_start = perf_counter()
     sample_plan = build_bone_sample_plan(prepared_payloads, _binding_sample_key)
     sample_groups = {
@@ -937,6 +1019,7 @@ def export_bone_payloads_for_draw_parts(
                 payload["correction_mode"],
                 payload["payload_flags"],
             )
+            metadata["bind_auto_refresh"] = bind_auto_refresh
             metadata["sampling_cache"] = {
                 "mode": "shared_pose_tq_by_correction_mode",
                 "sample_group": group_key,
@@ -1003,6 +1086,7 @@ def export_bone_payloads_for_draw_parts(
         "sample_cache_enabled": bool(sample_cache_dir),
         "sample_isolation": dict(sample_isolation or {}),
         "static_bonex_driver_mute": dict(static_bonex_driver_mute or {}),
+        "bind_auto_refresh": dict(bind_auto_refresh or {}),
         "unique_sampled_bones_by_group": sample_group_bones,
         "estimated_sample_bone_pairs": sum(len(exported_frames) * count for count in sample_group_bones),
         "total_payload_bone_slots": sum(len(payload["bindings"]) for payload in prepared_payloads),

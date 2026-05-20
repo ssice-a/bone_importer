@@ -30,6 +30,28 @@ def _load_bonex_driver_helpers():
     return namespace["_is_static_bonex_driver_constraint"], namespace["_iter_static_bonex_driver_constraints"]
 
 
+def _load_bind_stale_helpers():
+    source_path = Path(__file__).resolve().parents[1] / "core" / "bone_payload_export.py"
+    module_ast = ast.parse(source_path.read_text(encoding="utf-8"))
+    wanted = {
+        "_flat_matrix_rest_delta",
+        "_pose_bone_bind_rest_delta",
+    }
+    selected = [node for node in module_ast.body if isinstance(node, ast.FunctionDef) and node.name in wanted]
+    namespace = {}
+    compiled = compile(ast.Module(body=selected, type_ignores=[]), str(source_path), "exec")
+    exec(compiled, namespace)
+    return namespace["_flat_matrix_rest_delta"], namespace["_pose_bone_bind_rest_delta"]
+
+
+class MatrixRows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __getitem__(self, index):
+        return self.rows[index]
+
+
 class BonePayloadLayoutTests(unittest.TestCase):
     def test_bone_static_reserves_three_rows_before_slot_zero(self):
         build_bone_static_uint4_rows = _load_static_row_builder()
@@ -46,6 +68,40 @@ class BonePayloadLayoutTests(unittest.TestCase):
         rows = build_bone_static_uint4_rows((0,), sample_count=5, flags=1)
 
         self.assertEqual(rows[1], (6, 6, 1, 0))
+
+    def test_bind_stale_detection_compares_cached_bind_to_current_rest(self):
+        flat_delta, pose_delta = _load_bind_stale_helpers()
+        rest = MatrixRows(
+            (
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+        stale_bind = (
+            1.0, 0.0, 0.0, 2.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        )
+        pose_bone = SimpleNamespace(
+            bi_bind_valid=True,
+            bi_bind_matrix=stale_bind,
+            bone=SimpleNamespace(matrix_local=rest),
+        )
+
+        self.assertEqual(flat_delta(stale_bind, rest), 2.0)
+        self.assertEqual(pose_delta(pose_bone), 2.0)
+
+    def test_rx_export_auto_refreshes_stale_proxy_binds_before_sampling(self):
+        source_path = Path(__file__).resolve().parents[1] / "core" / "bone_payload_export.py"
+        source = source_path.read_text(encoding="utf-8")
+
+        self.assertIn("BIND_REST_STALE_EPSILON", source)
+        self.assertIn("def _auto_refresh_stale_proxy_binds", source)
+        self.assertIn("capture_proxy_bind_matrices(armature)", source)
+        self.assertIn('"bind_auto_refresh"', source)
 
     def test_static_bonex_driver_world_pin_is_muted_during_sampling(self):
         is_static_bonex_driver, _iter_static_bonex_driver_constraints = _load_bonex_driver_helpers()

@@ -152,6 +152,7 @@ def _print_export_performance(perf_report: dict):
         bone_timings,
         (
             "prepare_payloads_seconds",
+            "bind_auto_refresh_seconds",
             "build_sample_groups_seconds",
             "sample_total_seconds",
             "restore_frame_seconds",
@@ -191,6 +192,15 @@ def _print_export_performance(perf_report: dict):
         f"muted={static_bonex_driver_mute.get('muted_constraint_count', 0)} "
         f"setup={_seconds(static_bonex_driver_mute.get('seconds'))} "
         f"restore={_seconds(static_bonex_driver_mute.get('restore_seconds'))}"
+    )
+    bind_auto_refresh = dict(bone_perf.get("bind_auto_refresh", {}) or {})
+    print(
+        "Bind auto refresh: "
+        f"stale_armatures={bind_auto_refresh.get('stale_armature_count', 0)} "
+        f"stale_bones={bind_auto_refresh.get('stale_bone_count', 0)} "
+        f"refreshed={len(bind_auto_refresh.get('refreshed_armatures', {}) or {})} "
+        f"threshold={bind_auto_refresh.get('threshold', 0)} "
+        f"elapsed={_seconds(bind_auto_refresh.get('seconds'))}"
     )
     for group in bone_perf.get("sample_groups", []) or []:
         cache_state = "hit" if group.get("cache_hit") else "miss"
