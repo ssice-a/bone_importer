@@ -115,7 +115,7 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("ticks_per_sample=resolved_ticks_per_sample", source)
         self.assertNotIn("ticks_per_sample=1,\n        write_metadata=write_metadata", source)
 
-    def test_morph_draw_part_runs_morph_before_bone_and_binds_runtime_vb(self):
+    def test_morph_draw_part_keeps_geometry_bound_until_safe_runtime_vb_path_exists(self):
         manifest = {
             "clips": {
                 "rxanimin": {
@@ -192,14 +192,16 @@ class RuntimeIniDispatchTests(unittest.TestCase):
 
         ini = _load_runtime_ini_builder()(manifest, "rxanimin", r"E:\XXMI\EFMI\Mods\RX")
 
-        morph_run_index = ini.index("run = CustomShader_ApplyMorph\n")
-        bone_run_index = ini.index("run = CustomShader_UpdateBonePaletteTQ")
-        self.assertLess(morph_run_index, bone_run_index)
-        self.assertIn("dispatch = 166, 1, 1\nrun = CustomShader_ApplyMorph", ini)
-        self.assertIn("vb0 = ref ResourceMorphRuntimeVB_e78c7068_10590_0", ini)
-        self.assertIn("vb3 = ref ResourceMorphRuntimeVB_e78c7068_10590_0", ini)
-        self.assertIn("dispatch = 22, 1, 1\nrun = CustomShader_ApplyMorph_PNTA40", ini)
-        self.assertIn("vb0 = ref ResourceMorphRuntimeVB_2009f0d6_1356_0", ini)
+        self.assertNotIn("ResourceMorphRuntimeVB_e78c7068_10590_0 = copy ResourceMorphRuntimeVB_e78c7068_10590_0_UAV", ini)
+        self.assertNotIn("ResourceMorphRuntimeVB_2009f0d6_1356_0 = copy ResourceMorphRuntimeVB_2009f0d6_1356_0_UAV", ini)
+        self.assertNotIn("run = CustomShader_ApplyMorph\n", ini)
+        self.assertNotIn("run = CustomShader_ApplyMorph_PNTA40\n", ini)
+        self.assertNotIn("vb0 = ref ResourceMorphRuntimeVB_e78c7068_10590_0", ini)
+        self.assertNotIn("vb0 = ref ResourceMorphRuntimeVB_2009f0d6_1356_0", ini)
+        self.assertIn("run = CustomShader_UpdateBonePaletteTQ", ini)
+        self.assertIn("vb0 = ref ResourceGeometry_e78c7068_10590_0_part00_vb0", ini)
+        self.assertIn("vb3 = ref ResourceGeometry_e78c7068_10590_0_part00_vb0", ini)
+        self.assertIn("vb0 = ref ResourceGeometry_2009f0d6_1356_0_part00_vb0", ini)
         self.assertIn("vb3 = ref ResourceGeometry_2009f0d6_1356_0_part00_vb3", ini)
 
 

@@ -10,6 +10,12 @@ from .draw_part import DEFAULT_MATCH_PRIORITY
 from .manifest import load_export_manifest
 
 
+# XXMI currently rejects copying a compute-written RWStructuredBuffer into a
+# vertex Buffer (d3d11_log reports 0x80070057). Keep runtime morph off until
+# we switch to a proven typed RWBuffer path or VS-side morph application.
+ENABLE_RUNTIME_MORPH_VERTEX_BINDING = False
+
+
 def _line(lines: list[str], value: str = ""):
     lines.append(value)
 
@@ -318,7 +324,8 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
     _line(lines, f"match_priority = {match_priority}")
     if geometry_record is not None:
         _line(lines, "handling = skip")
-    if morph_payload is not None:
+    use_runtime_morph = morph_payload is not None and ENABLE_RUNTIME_MORPH_VERTEX_BINDING
+    if use_runtime_morph:
         shader = "CustomShader_ApplyMorph_PNTA40" if str(morph_payload.get("base_position_layout", "")).endswith("PNTA40") else "CustomShader_ApplyMorph"
         base_resource = (
             f"ResourceGeometry_{geometry_suffix}_vb0_SRV"
@@ -355,19 +362,19 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, f"ib = ref ResourceGeometryIndex_{geometry_suffix}")
         for slot_name, _vertex_buffer in sorted(geometry_vertex_buffers.items(), key=lambda item: item[0]):
             slot = str(slot_name or "").lower()
-            if slot == "vb0" and morph_payload is not None:
+            if slot == "vb0" and use_runtime_morph:
                 _line(lines, f"vb0 = ref ResourceMorphRuntimeVB_{key}")
             else:
                 _line(lines, f"{slot} = ref ResourceGeometry_{geometry_suffix}_{slot}")
         if "vb0" in geometry_vertex_buffers and "vb3" not in geometry_vertex_buffers:
-            if morph_payload is not None:
+            if use_runtime_morph:
                 _line(lines, f"vb3 = ref ResourceMorphRuntimeVB_{key}")
             else:
                 _line(lines, f"vb3 = ref ResourceGeometry_{geometry_suffix}_vb0")
         index_buffer = dict(geometry_record.get("index_buffer", {}) or {})
         index_count = int(index_buffer.get("index_count", geometry_record.get("index_count", 0)) or 0)
         _line(lines, f"drawindexedinstanced = {index_count},INSTANCE_COUNT,0,0,FIRST_INSTANCE")
-    elif morph_payload is not None:
+    elif use_runtime_morph:
         _line(lines, f"vb0 = ref ResourceMorphRuntimeVB_{key}")
         _line(lines, f"vb3 = ref ResourceMorphRuntimeVB_{key}")
     _line(lines)
