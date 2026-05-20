@@ -83,8 +83,8 @@ UV = flip V by default
 bitangent sign = flip when exactly one of mirror-X or flip-V is active
 skin matrix rows = YV row mapping:
     YV/EFMI axis conversion itself is not a mirror.
-    RX-imported geometry mirror metadata belongs to geometry vector export.
-    It must not silently remap Bone Payload slot ids.
+    RX-imported geometry mirror metadata belongs to geometry vector export
+    and Slot Contract source-bone adaptation.
     game_row_0 =  blender_row_0
     game_row_1 =  blender_row_2
     game_row_2 = -blender_row_1
@@ -96,7 +96,7 @@ The Python truth source is:
 core/coordinate_contract.py
 ```
 
-Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, UV mirroring/flipping, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror, and the RX imported mesh mirror is a vector-value conversion rather than a slot-identity conversion.
+Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, UV mirroring/flipping, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror. RX imported mesh mirror is handled as vector-value conversion for geometry and as source-bone adaptation for automatic Target Numeric Groups.
 
 UV U mirroring is explicit:
 
@@ -115,7 +115,9 @@ target slot 1 writes runtime palette slot 1
 ...
 ```
 
-If a DrawPart really needs `slot 0` to sample a different source bone, that relationship must be written as an explicit Bone Slot Map JSON. The exporter must not infer left/right slot swaps from `bmc_mirror_flip`, centroids, object names, or mesh shape.
+For automatic Target Numeric Groups on BMC-imported mirrored meshes, the runtime slot remains unchanged but the sampled source bone may be the mirrored Blender-side slot. Example: target runtime slot `0` still writes palette slot `0`, but it may sample source bone `56__<DrawPart>` if that source bone is the X-mirrored centroid match for slot `0`.
+
+Explicit Bone Slot Map JSON always wins. Use it for replacement/external models or any DrawPart where centroid-based imported-mirror pairing is not the desired source-space adapter.
 
 ## Animation Bank Control
 
