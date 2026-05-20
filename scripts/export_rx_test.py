@@ -212,12 +212,22 @@ def _register_addon():
     if REPO_PARENT not in sys.path:
         sys.path.insert(0, REPO_PARENT)
 
+    existing_addon = sys.modules.get("bone_importer")
+    if existing_addon is not None:
+        try:
+            existing_addon.unregister()
+        except Exception:
+            pass
+
+    for module_name in sorted(
+        [name for name in sys.modules if name == "bone_importer" or name.startswith("bone_importer.")],
+        key=len,
+        reverse=True,
+    ):
+        sys.modules.pop(module_name, None)
+
     import bone_importer
 
-    try:
-        bone_importer.unregister()
-    except Exception:
-        pass
     bone_importer.register()
     return bone_importer
 
