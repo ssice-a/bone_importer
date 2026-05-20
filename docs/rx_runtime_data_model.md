@@ -1,44 +1,113 @@
 # RX Runtime Data Model
 
-This document records the target data structure for the Bone Importer refactor. The goal is to support Bone-Only Animation, Replacement Skinned Model animation, and Morph-Only Animation without making model export part of this plugin.
+This document records the RX v2 target data structure. Bone Importer exports animation data, not replacement meshes. The runtime model is intentionally single-path:
+
+```text
+Bone animation = one DrawPart-local Bone Payload per IB/injected draw
+Morph animation = one DrawPart-local Morph Payload when needed
+Action switching = shared active_clip_index applied to every local payload
+```
+
+No global bone-pool compatibility path is part of RX v2.
 
 ## Design Goals
 
-- Bone Importer exports animation data, not replacement mesh data.
-- A Clip owns time only.
-- A DrawPart owns runtime targeting only.
-- Bone Payload and Morph Payload are independent data payloads.
+- Bone Importer exports Bone Payload and Morph Payload data, not model buffers, textures, or materials.
+- An Animation Bank owns one shared playback state.
+- An Animation Bank may contain multiple Clips.
+- A DrawPart owns runtime targeting: `hash`, `match_index_count`, `first_index`, CB1 profile, route type, and its local Bone Payload.
+- The decisive reason for local Bone Payloads is slot isolation: external models, replacement models, injected models, and native game models may all use different meanings for local slot `0`.
+- Multi-Clip switching is still supported. The plugin switches every DrawPart-local Bone Payload and Morph Payload by the same `active_clip_index`.
 - INI is generated from the Runtime Manifest, not from only the latest export pass.
-- The default bone runtime uses one local bone palette per DrawPart, not one global FakeT0 buffer sliced by `part_id`.
 
 ## Minimal Concepts
 
 ```text
-Clip          = shared time
-DrawPart      = target TextureOverride / IB
-Bone Payload  = per-DrawPart TQ animation and bind data
-Morph Payload = per-DrawPart shape-key data
-Manifest      = relationship map used to render INI
+Animation Bank   = shared playback + clip table + DrawPart payloads
+Clip             = one named playable action inside the bank
+DrawPart         = target TextureOverride / IB / injected draw route
+Bone Payload     = DrawPart-local, action-indexed TQ and bind data
+Morph Payload    = DrawPart-local shape-key animation data
+Manifest         = relationship map used to render INI
 ```
 
 Anything outside those concepts is optional implementation detail.
 
-## Clip Control
+## Why Local Bone Payloads
 
-The Clip is shared by every Bone Payload and Morph Payload in one exported animation.
+RX v2 uses local Bone Payloads instead of a single Global Bone Pool because a global pool solves action switching but creates a worse slot-semantics problem.
+
+Examples:
+
+```text
+Native body DrawPart:
+  local slot 0 = game numeric bone 0
+
+Injected external model:
+  local slot 0 = external armature bone Head
+
+Replacement face model:
+  local slot 0 = replacement model face bone 0
+```
+
+These meanings should not share one global bone namespace. A DrawPart-local Bone Payload keeps each route isolated:
+
+```text
+ResourceBonePalette_<draw_key>
+ResourceBoneAnim_<draw_key>
+ResourceBoneBind_<draw_key>
+ResourceBoneStatic_<draw_key>
+```
+
+Action switching is handled by the shared playback state:
+
+```text
+active_clip_index = N
+all DrawPart-local bone shaders sample clip N
+all DrawPart-local morph shaders sample clip N
+```
+
+So switching two or more actions does not require a global bone pool. It requires every local payload to store the same Clip table semantics.
+
+## Runtime Coordinate Contract
+
+The Runtime Coordinate Contract is the single rule set that keeps replacement geometry, Bone Payload data, Morph Payload data, and generated HLSL in the same runtime space for the same DrawPart.
+
+Current RX contract:
+
+```text
+name = RX_RUNTIME_MIRROR_X_VFLIP
+position / normal / tangent = mirror Blender X into game X
+UV = flip V by default
+bitangent sign = flip when exactly one of mirror-X or flip-V is active
+skin matrix rows = Sx * blender_skin * Sx
+```
+
+The Python truth source is:
+
+```text
+core/coordinate_contract.py
+```
+
+Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module.
+
+## Animation Bank Control
+
+The bank owns shared time and active action selection.
 
 Files:
 
 ```text
-<clip>_timeline_static.buf
-<clip>_master_playback.buf
+<bank>_timeline_static.buf
+<bank>_master_playback.buf
 ```
 
 `timeline_static.buf` uses `uint4` rows:
 
 ```text
-row 0 = { sample_count, clip_fps, default_ticks_per_sample, 0 }
-row 1 = { default_loop_start_sample, default_loop_end_sample, 0, 0 }
+row 0 = { clip_count, draw_part_count, default_clip_index, flags }
+row 1..N = clip table, one row per Clip:
+          { sample_count, default_ticks_per_sample, loop_start_sample, loop_end_sample }
 ```
 
 `master_playback.buf` uses `uint4` rows:
@@ -46,14 +115,14 @@ row 1 = { default_loop_start_sample, default_loop_end_sample, 0, 0 }
 ```text
 row 0 = { flags, previous_tick, current_tick, playback_tick }
 row 1 = { ticks_per_sample, loop_start_sample, loop_end_sample, seek_tick }
-row 2 = { seek_active, last_control_token, 0, 0 }
+row 2 = { seek_active, last_control_token, active_clip_index, queued_clip_index }
 ```
 
-Runtime shaders resolve time through `ResolveTickToSampleWindow(...)`.
+Runtime shaders resolve time from `active_clip_index` plus `current_tick`. When the UI switches Clip, it changes `active_clip_index` and resets or preserves tick according to the control command.
 
 ## DrawPart
 
-A DrawPart is the runtime target matched by a TextureOverride.
+A DrawPart is the runtime target matched by a TextureOverride or an injected draw route.
 
 Required manifest fields:
 
@@ -64,11 +133,29 @@ Required manifest fields:
   "match_index_count": 8322,
   "first_index": 0,
   "match_priority": -1000,
+  "route": "REPLACE_MODEL",
   "cb1_profile": "NONE"
 }
 ```
 
-`match_priority` defaults to `-1000` so the RX animation entry runs before later replacement/draw overrides. `draw_key` is the stable identity for resources and manifest entries. `part_id`, `part_base`, and global palette slice offsets are not part of the default design.
+`route` defines how the TextureOverride behaves:
+
+```text
+PASSTHROUGH
+  Do not bind RX bone data, geometry, or morph data. Let the game draw normally.
+
+BONE_ONLY
+  Keep the game model, but replace its bone palette through this DrawPart's Bone Payload.
+
+REPLACE_MODEL
+  Skip the original draw and draw replacement geometry with this DrawPart's Bone Payload.
+
+INJECT_MODEL
+  Do not skip the original draw. Draw extra replacement geometry with this DrawPart's Bone Payload.
+
+MORPH_ONLY
+  Apply morph data to a target VB without requiring a Bone Payload.
+```
 
 ## Bone Payload
 
@@ -92,22 +179,17 @@ ResourceBonePalette_<draw_key>
 `bone_static.buf` uses `uint4` rows:
 
 ```text
-row 0 = { bone_count, sample_count, reserved_rows, slot_map_row_count }
-row 1 = { palette_row_count, previous_palette_base, flags, 0 }
-row 2+ = packed slot ids, four slot ids per row
+row 0 = { clip_count, bone_count, reserved_rows, slot_map_row_count }
+row 1 = { palette_row_count, previous_palette_base, flags, clip_table_base }
+row 2.. = clip table, one row per Clip:
+          { sample_count, sample_row_base, loop_start_sample, loop_end_sample }
+after clip table = packed local slot ids, four slot ids per row
 ```
 
-`previous_palette_base` is local to the DrawPart buffer. The default value is `palette_row_count`, so the runtime palette layout is:
+`bone_anim.buf` uses `float4` rows and is action-indexed:
 
 ```text
-current palette  = rows 0 .. palette_row_count - 1
-previous palette = rows palette_row_count .. palette_row_count * 2 - 1
-```
-
-`bone_anim.buf` uses `float4` rows:
-
-```text
-[sample][bone][2 rows]
+[clip][sample][bone][2 rows]
 row 0 = translation.xyz, 1
 row 1 = quaternion.xyzw
 ```
@@ -121,28 +203,34 @@ row 1 = quaternion.xyzw
 Runtime shader flow:
 
 ```text
-sample_a / sample_b / sample_alpha from MasterPlayback
+active_clip_index from MasterPlayback
+sample_a / sample_b / sample_alpha from TimelineStatic + MasterPlayback
 T = lerp(T_a, T_b, sample_alpha)
 Q = normalized shortest-path lerp(Q_a, Q_b, sample_alpha)
 pose = matrix_from_TQ(T, Q)
 skin = pose * inverse_bind
+skin = Runtime Coordinate Contract conversion
 write current and previous local palette rows
 ```
 
-The shader should be named `update_bone_palette_tq_cs.hlsl`. It replaces the old global-slice `copy_clip_to_faket0_cs.hlsl` path.
+The shader remains DrawPart-local:
+
+```text
+update_bone_palette_tq_cs.hlsl
+```
+
+It must be extended to read `active_clip_index` and the local clip table.
 
 Exporter flow:
 
 ```text
-DrawParts -> BoneSampleBank -> per-DrawPart Bone Payload files
+DrawParts -> BoneSampleBank -> one Bone Payload per DrawPart
 ```
-
-`BoneSampleBank` is the exporter-side sampling module. It groups DrawParts by compatible correction mode, deduplicates source bones inside each group, samples each unique source bone once per Clip sample, then slices the shared sample matrix back into each DrawPart's slot order. This preserves local Bone Payload files while avoiding repeated Blender `frame_set`/pose evaluation for the same source bones.
 
 Performance rule:
 
 ```text
-sample once by source-bone group, write many DrawPart payloads
+sample once by source-bone group, write many DrawPart-local payloads
 ```
 
 ## Morph Payload
@@ -182,13 +270,16 @@ normal_at_1 packed as EFMI R32_UINT when enabled
 optional tangent target rows for explicit PNTA40 layouts
 ```
 
-`morph_anim.buf` uses `uint4` rows:
+`morph_anim.buf` must use the same `active_clip_index` as the Bone Payload:
 
 ```text
-row 0 = { channel_count, sample_count, baked_weight_row_count, weights_per_row }
-row 1 = { 0, source_frame_start, source_frame_step, 0 }
-payload = sample-major fp16 weights
+row 0 = { clip_count, channel_count, weights_per_row, flags }
+row 1..N = clip table, one row per Clip:
+          { sample_count, sample_row_base, source_frame_start, source_frame_step }
+payload = [clip][sample][channel] fp16 weights, sample-major within each Clip
 ```
+
+If a DrawPart has no morph for a Clip, either omit the Morph Payload for that DrawPart or write a clip-table entry with zero channels/effective zero weights.
 
 The base vertex buffer is not exported by Bone Importer. It is an explicit DrawPart setting supplied by the user or external model export workflow.
 
@@ -200,20 +291,35 @@ Example:
 
 ```json
 {
-  "format": "rx_runtime_manifest_v1",
-  "clip": {
+  "format": "rx_runtime_manifest_v3",
+  "animation_bank": {
     "name": "rxanimin",
-    "sample_count": 120,
-    "fps": 60,
     "timeline_static": "rxanimin_timeline_static.buf",
     "master_playback": "rxanimin_master_playback.buf"
   },
+  "clips": [
+    {
+      "name": "idle",
+      "clip_index": 0,
+      "sample_count": 120,
+      "fps": 30,
+      "default_ticks_per_sample": 1
+    },
+    {
+      "name": "dance",
+      "clip_index": 1,
+      "sample_count": 5671,
+      "fps": 30,
+      "default_ticks_per_sample": 1
+    }
+  ],
   "draw_parts": {
     "c3806ef1_8322_0": {
       "hash": "c3806ef1",
       "match_index_count": 8322,
       "first_index": 0,
       "match_priority": -1000,
+      "route": "REPLACE_MODEL",
       "cb1_profile": "NONE"
     }
   },
@@ -236,7 +342,7 @@ Example:
 }
 ```
 
-When a later export adds or replaces one payload, it updates only that `draw_key` entry.
+When a later export adds a Clip, it appends that Clip into each selected DrawPart-local payload. When a later export adds Morph Payload data, it updates only that DrawPart's morph entry.
 
 ## INI Rendering
 
@@ -282,10 +388,10 @@ TextureOverride order:
 2. if Bone Payload exists, run local bone palette pass
 3. if Bone Payload exists, redirect cb1 to local palette offsets
 4. bind local bone palette to vs-t0 and local fake cb1 to vs-cb1
-5. draw
+5. draw, skip original draw only for REPLACE_MODEL
 ```
 
-TextureOverride blocks should not rely on global `part_id` or global FakeT0 slices.
+TextureOverride blocks must not bind unrelated DrawPart Bone Payloads.
 
 ## HLSL Changes
 
@@ -293,9 +399,12 @@ Keep:
 
 ```text
 rx_anim_sampling.hlsli
+rx_anim_coordinate_contract.hlsli
 rx_anim_efmi_normal.hlsli
 rx_anim_morph_common.hlsli
 update_master_playback_cs.hlsl
+update_bone_palette_tq_cs.hlsl
+redirect_cb1_local_palette_cs.hlsl
 update_panel_state_cs.hlsl
 apply_morph_to_vb_cs.hlsl
 apply_morph_to_vb_pnta40_cs.hlsl
@@ -303,25 +412,34 @@ panel_sprite.hlsl
 panel_digits.hlsl
 ```
 
-Replace:
+Modify:
 
 ```text
-copy_clip_to_faket0_cs.hlsl -> update_bone_palette_tq_cs.hlsl
-redirect_cb1_with_static_clip_cs.hlsl -> redirect_cb1_local_palette_cs.hlsl
+update_bone_palette_tq_cs.hlsl
+  read active_clip_index
+  read local clip table from bone_static
+  sample [clip][sample][bone]
+
+apply_morph_to_vb_cs.hlsl / apply_morph_to_vb_pnta40_cs.hlsl
+  read active_clip_index
+  read local clip table from morph_anim
+  sample [clip][sample][channel]
+
+update_master_playback_cs.hlsl
+  preserve and update active_clip_index in row2.z
 ```
 
-Remove from the default route:
+Remove from RX v2:
 
 ```text
-global FakeT0 buffer
-part_base
-previous_offset as global buffer offset
-part_id based global slicing
+global bone pool
+shared bone namespace across DrawParts
+part_id as authoring input
 ```
 
 ## UI Requirements
 
-The UI controls only `MasterPlayback`. It must not know how many DrawParts, Bone Payloads, or Morph Payloads exist.
+The UI controls only the Animation Bank playback state.
 
 Required UI behavior:
 
@@ -331,6 +449,7 @@ play / pause
 replay
 cycle speed
 drag seek bar
+switch active Clip
 show progress from MasterPlayback
 ```
 
@@ -341,22 +460,23 @@ ResourceTimelineStatic
 ResourceMasterPlayback_SRV
 ```
 
-It must not read a per-part animation metadata buffer.
+The UI must not know how many DrawParts, Bone Payloads, or Morph Payloads exist.
 
 ## Not In Scope
 
 - exporting replacement meshes, IBs, VBs, textures, or materials
 - automatic base VB inference from TheHerta INI
-- global palette slice management as the default route
+- global bone pool
 - using Blender mesh object names as runtime identity except through DrawPart parsing
 - duplicating playback state inside Bone Payload or Morph Payload files
 
 ## Migration Plan
 
-1. Add Runtime Manifest read/write as the source of truth.
-2. Replace proxy-armature-shaped export targets with DrawPart-shaped targets.
-3. Change bone export to write per-DrawPart `bone_static`, `bone_anim`, and `bone_bind`.
-4. Add local bone palette HLSL and local cb1 redirect HLSL.
-5. Change INI generation to render from the Runtime Manifest.
-6. Keep morph buffers independent and bind them by DrawPart.
-7. Move old palette import/export into Debug or Legacy tools.
+1. Keep one Bone Payload per DrawPart as the RX v2 bone route.
+2. Upgrade Bone Payload files from single-Clip to multi-Clip layout.
+3. Upgrade TimelineStatic and MasterPlayback with `active_clip_index`.
+4. Extend `update_bone_palette_tq_cs.hlsl` to sample local multi-Clip payloads.
+5. Extend Morph Payload animation to the same multi-Clip model.
+6. Keep INI resource generation DrawPart-local for bone and morph resources.
+7. Add route handling for `PASSTHROUGH`, `BONE_ONLY`, `REPLACE_MODEL`, `INJECT_MODEL`, and `MORPH_ONLY`.
+8. Delete any new global-pool implementation work from the RX v2 route.

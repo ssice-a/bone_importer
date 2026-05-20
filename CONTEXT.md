@@ -5,23 +5,35 @@ Bone Importer exports runtime animation data for EFMI/3DMigoto mods. It does not
 ## Language
 
 **Clip**:
-A shared runtime timeline used by every animation payload in one exported animation.
+A named playable action inside an Animation Bank. Every DrawPart-local Bone Payload and Morph Payload uses the same Clip index so UI action switching stays synchronized.
 _Avoid_: animation file, mesh animation
+
+**Animation Bank**:
+The exported runtime package that contains one or more Clips, one shared playback state, DrawPart-local Bone Payloads, and DrawPart-local Morph Payloads.
+_Avoid_: single animation, ini package
 
 **DrawPart**:
 One runtime draw target matched by a TextureOverride, normally identified by `hash`, `match_index_count`, and `first_index`.
 _Avoid_: mesh, object, part id
 
+**DrawPart Bone Pool**:
+The per-DrawPart runtime bone palette for one IB or injected draw route. It keeps local slot semantics isolated, so external-model slots never collide with native game-model slots.
+_Avoid_: global bone namespace, shared slot semantics
+
 **Bone Payload**:
-The per-DrawPart bone animation data that updates the local runtime bone palette.
-_Avoid_: FakeT0 slice, global palette segment
+The per-DrawPart, action-indexed TQ and bind data that updates that DrawPart's Bone Pool.
+_Avoid_: global palette segment, shared bone file
 
 **Morph Payload**:
 The per-DrawPart shape-key animation data that updates a target vertex buffer before skinning.
 _Avoid_: mesh export, model export
 
+**Runtime Coordinate Contract**:
+The shared Blender-to-game coordinate rules that must be used by replacement geometry export, Bone Payload runtime HLSL, and Morph Payload runtime HLSL for the same DrawPart.
+_Avoid_: local mirror fix, one-off axis conversion
+
 **Runtime Manifest**:
-The persistent relationship map between a Clip, DrawParts, and their Bone Payload or Morph Payload files.
+The persistent relationship map between an Animation Bank, its Clips, DrawParts, DrawPart-local Bone Payloads, and DrawPart-local Morph Payloads.
 _Avoid_: generated ini, clip manifest
 
 **Bone-Only Animation**:
@@ -38,12 +50,15 @@ _Avoid_: shape-key mesh export
 
 ## Relationships
 
-- A **Clip** has one shared playback state.
-- A **DrawPart** may have zero or one **Bone Payload** for a Clip.
-- A **DrawPart** may have zero or one **Morph Payload** for a Clip.
-- A **Runtime Manifest** records many **DrawParts** under one **Clip**.
+- An **Animation Bank** has one shared playback state.
+- An **Animation Bank** may contain one or more **Clips**.
+- A **DrawPart** may have zero or one **DrawPart Bone Pool** for the **Animation Bank**.
+- A **DrawPart Bone Pool** is action-indexed by the shared Clip index.
+- A **DrawPart** may have zero or one **Morph Payload** for the **Animation Bank**.
+- A **Runtime Manifest** records many **DrawParts** under one **Animation Bank**.
+- A **Runtime Coordinate Contract** must be shared by every runtime payload and any replacement geometry bound to the same **DrawPart**.
 - A **Replacement Skinned Model** is exported by an external model tool, not by Bone Importer.
-- A **Morph Payload** may coexist with a **Bone Payload**, but does not depend on one.
+- A **Morph Payload** may coexist with a **DrawPart Bone Pool**, but does not depend on one.
 
 ## Example Dialogue
 
@@ -54,3 +69,4 @@ _Avoid_: shape-key mesh export
 
 - "part" previously meant both global palette slice and draw target. Resolved: use **DrawPart** for the draw target, and avoid global slice terminology in the new design.
 - "mesh key" previously identified both Blender source objects and runtime resources. Resolved: use **DrawPart** for runtime identity and explicit source objects for Blender authoring inputs.
+- A global bone pool was considered and rejected for RX v2. The decisive reason is slot semantics: external models, replacement models, and native game models may all use different local slot meanings, so one IB should own one Bone Payload. Multi-Clip switching is handled by giving every DrawPart-local Bone Payload the same `active_clip_index`.
