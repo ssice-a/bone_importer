@@ -13,7 +13,6 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
 
         self.assertNotIn("$rx_anim_enable", source)
-        self.assertNotIn('_line(lines, "endif")', source)
 
     def test_bone_palette_dispatch_lives_inside_custom_shader(self):
         source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
@@ -67,7 +66,17 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("def _clip_default_ticks_per_sample", source)
         self.assertIn("_append_constants(lines, _clip_default_ticks_per_sample(manifest, clip_name))", source)
         self.assertIn('global persist $rx_anim_speed = {speed}', source)
+        self.assertIn("global persist $rx_anim_speed_default = 0", source)
+        self.assertIn('if $rx_anim_speed_default == 0', source)
         self.assertNotIn('_line(lines, "global persist $rx_anim_speed = 1")', source)
+
+    def test_runtime_ini_runs_rx_ui_present_commandlist(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn('run = CommandListRXUIPresent', source)
+        self.assertIn('"update_rx_panel_state_cs.hlsl"', source)
+        self.assertIn('"panel_sprite.hlsl"', source)
+        self.assertIn('"panel_digits.hlsl"', source)
 
     def test_export_buttons_forward_ticks_per_sample_setting(self):
         source = OPERATORS_SOURCE.read_text(encoding="utf-8")

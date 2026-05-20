@@ -59,10 +59,29 @@ def _append_constants(lines: list[str], default_ticks_per_sample: int = 1):
     _line(lines, "global persist $rx_anim_control_token = 0")
     _line(lines, "global persist $rx_anim_control_value = 0")
     _line(lines, f"global persist $rx_anim_speed = {speed}")
+    _line(lines, "global persist $rx_anim_speed_default = 0")
     _line(lines, "global $rx_anim_seek_active = 0")
     _line(lines, "global $rx_anim_seek_norm = 0.0")
     _line(lines)
+    _line(lines, "global persist $rx_ui_open = 0")
+    _line(lines, "global persist $rx_ui_tab = 0")
+    _line(lines, "global persist $rx_ui_x = 0.05")
+    _line(lines, "global persist $rx_ui_y = 0.12")
+    _line(lines)
+    _line(lines, "global $rx_ui_hold = 0")
+    _line(lines, "global $rx_ui_hover = 0")
+    _line(lines, "global $rx_ui_drag = 0")
+    _line(lines, "global $rx_ui_drag_dx = 0.0")
+    _line(lines, "global $rx_ui_drag_dy = 0.0")
+    _line(lines, "global $rx_ui_seek_hold = 0")
+    _line(lines, "global $rx_ui_cursor_x = 0.0")
+    _line(lines, "global $rx_ui_cursor_y = 0.0")
+    _line(lines)
     _line(lines, "[Present]")
+    _line(lines, "if $rx_anim_speed_default == 0")
+    _line(lines, f"    $rx_anim_speed = {speed}")
+    _line(lines, f"    $rx_anim_speed_default = {speed}")
+    _line(lines, "endif")
     _line(lines, "x = $rx_anim_play")
     _line(lines, "y = $rx_anim_control_token")
     _line(lines, "z = $rx_anim_control_value")
@@ -70,6 +89,7 @@ def _append_constants(lines: list[str], default_ticks_per_sample: int = 1):
     _line(lines, "x1 = $rx_anim_speed")
     _line(lines, "y1 = $rx_anim_seek_norm")
     _line(lines, "run = CustomShader_UpdateMasterPlayback")
+    _line(lines, "run = CommandListRXUIPresent")
     _line(lines)
 
 
@@ -533,6 +553,256 @@ void ResolveTickToSampleWindow(uint tick, uint sample_count, uint ticks_per_samp
     sample_b = loop_min + ((local_sample + 1) % loop_len);
 }
 
+#endif
+""",
+    "update_rx_panel_state_cs.hlsl": r"""StructuredBuffer<uint4> TimelineStatic : register(t0);
+StructuredBuffer<uint4> MasterPlayback : register(t1);
+RWStructuredBuffer<float4> PanelState : register(u0);
+
+[numthreads(1, 1, 1)]
+void main(uint3 tid : SV_DispatchThreadID)
+{
+    uint4 timeline0 = TimelineStatic[0];
+    uint4 timeline1 = TimelineStatic[1];
+    uint4 playback0 = MasterPlayback[0];
+    uint4 playback1 = MasterPlayback[1];
+
+    uint sample_count = max(timeline0.x, 1u);
+    uint current_tick = playback0.z;
+    uint ticks_per_sample = max(playback1.x, 1u);
+    uint loop_start = min(playback1.y, sample_count - 1u);
+    uint loop_end = min(playback1.z, sample_count - 1u);
+
+    if (loop_end < loop_start)
+    {
+        loop_start = min(timeline1.x, sample_count - 1u);
+        loop_end = min(timeline1.y, sample_count - 1u);
+    }
+    if (loop_end < loop_start)
+    {
+        loop_start = 0u;
+        loop_end = sample_count - 1u;
+    }
+
+    uint loop_sample_count = loop_end - loop_start + 1u;
+    uint max_tick = (loop_sample_count > 1u) ? ((loop_sample_count - 1u) * ticks_per_sample) : 0u;
+
+    float progress_norm = 0.0;
+    if (max_tick > 0u)
+    {
+        progress_norm = saturate((float)min(current_tick, max_tick) / (float)max_tick);
+    }
+
+    PanelState[0] = float4(progress_norm, (float)current_tick, (float)max_tick, (float)ticks_per_sample);
+}
+""",
+    "panel_digits.hlsl": r"""Texture1D<float4> IniParams : register(t120);
+Texture2D<float4> DigitsAtlas : register(t100);
+
+#define RECT IniParams[87]
+#define TINT IniParams[89]
+
+static const uint GLYPH_COUNT = 13u; // 0-9, colon, slash, space
+
+SamplerState LinearSampler
+{
+    Filter = MIN_MAG_MIP_LINEAR;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+struct VsOut
+{
+    float4 pos : SV_Position0;
+    float2 uv : TEXCOORD0;
+};
+
+uint SpeedGlyphIndex(uint slot)
+{
+    uint speed = (uint)max(IniParams[1].x, 0.0);
+    speed = min(max(speed, 1u), 6u);
+    return (slot == 0u) ? speed : 12u;
+}
+
+#ifdef VERTEX_SHADER
+void main(out VsOut output, uint vertex : SV_VertexID)
+{
+    float width = RECT.x;
+    float height = RECT.y;
+    float pos_x = RECT.z;
+    float pos_y = RECT.w;
+
+    float left = pos_x * 2.0 - 1.0;
+    float right = (pos_x + width) * 2.0 - 1.0;
+    float top = 1.0 - pos_y * 2.0;
+    float bottom = 1.0 - (pos_y + height) * 2.0;
+
+    switch (vertex)
+    {
+    case 0:
+        output.pos.xy = float2(left, bottom);
+        output.uv = float2(0.0, 1.0);
+        break;
+    case 1:
+        output.pos.xy = float2(left, top);
+        output.uv = float2(0.0, 0.0);
+        break;
+    case 2:
+        output.pos.xy = float2(right, bottom);
+        output.uv = float2(1.0, 1.0);
+        break;
+    default:
+        output.pos.xy = float2(right, top);
+        output.uv = float2(1.0, 0.0);
+        break;
+    }
+
+    output.pos.zw = float2(0.0, 1.0);
+}
+#endif
+
+#ifdef PIXEL_SHADER
+float4 main(VsOut input) : SV_Target0
+{
+    uint atlas_width;
+    uint atlas_height;
+    DigitsAtlas.GetDimensions(atlas_width, atlas_height);
+    if (!atlas_width || !atlas_height)
+    {
+        discard;
+    }
+
+    float glyph_left = (float)SpeedGlyphIndex(0u) / (float)GLYPH_COUNT;
+    float glyph_right = glyph_left + (1.0 / (float)GLYPH_COUNT);
+    float2 atlas_uv = float2(lerp(glyph_left, glyph_right, input.uv.x), input.uv.y);
+    float4 result = DigitsAtlas.SampleLevel(LinearSampler, atlas_uv, 0.0);
+    result *= TINT;
+    if (result.a <= 1e-4)
+    {
+        discard;
+    }
+    return result;
+}
+#endif
+""",
+    "panel_sprite.hlsl": r"""Texture1D<float4> IniParams : register(t120);
+Texture2D<float4> Sprite : register(t100);
+StructuredBuffer<float4> PanelState : register(t101);
+
+SamplerState LinearSampler
+{
+    Filter = MIN_MAG_MIP_LINEAR;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+#define RECT IniParams[87]
+#define PARAMS IniParams[88]
+#define TINT IniParams[89]
+
+struct VsOut
+{
+    float4 pos : SV_Position0;
+    float2 uv : TEXCOORD0;
+};
+
+float ResolveProgressNorm()
+{
+    float progress_norm = 0.0;
+    if (IniParams[2].y > 0.5)
+    {
+        progress_norm = IniParams[2].x;
+    }
+    else
+    {
+        progress_norm = PanelState[0].x;
+    }
+    return saturate(progress_norm);
+}
+
+#ifdef VERTEX_SHADER
+void main(out VsOut output, uint vertex : SV_VertexID)
+{
+    float width = RECT.x;
+    float height = RECT.y;
+    float pos_x = RECT.z;
+    float pos_y = RECT.w;
+
+    float left = pos_x * 2.0 - 1.0;
+    float right = (pos_x + width) * 2.0 - 1.0;
+    float top = 1.0 - pos_y * 2.0;
+    float bottom = 1.0 - (pos_y + height) * 2.0;
+
+    switch (vertex)
+    {
+    case 0:
+        output.pos.xy = float2(left, bottom);
+        output.uv = float2(0.0, 1.0);
+        break;
+    case 1:
+        output.pos.xy = float2(left, top);
+        output.uv = float2(0.0, 0.0);
+        break;
+    case 2:
+        output.pos.xy = float2(right, bottom);
+        output.uv = float2(1.0, 1.0);
+        break;
+    default:
+        output.pos.xy = float2(right, top);
+        output.uv = float2(1.0, 0.0);
+        break;
+    }
+
+    output.pos.zw = float2(0.0, 1.0);
+}
+#endif
+
+#ifdef PIXEL_SHADER
+float4 main(VsOut input) : SV_Target0
+{
+    uint width;
+    uint height;
+    Sprite.GetDimensions(width, height);
+    if (!width || !height)
+    {
+        discard;
+    }
+
+    float2 sprite_uv = input.uv;
+    uint mode = (uint)PARAMS.x;
+    float progress_norm = 1.0;
+
+    if (mode == 1u || mode == 2u)
+    {
+        progress_norm = ResolveProgressNorm();
+    }
+
+    if (mode == 1u && input.uv.x > progress_norm)
+    {
+        discard;
+    }
+
+    if (mode == 2u)
+    {
+        float half_width = max(PARAMS.y, 0.0025);
+        float left = progress_norm - half_width;
+        float right = progress_norm + half_width;
+        if (input.uv.x < left || input.uv.x > right)
+        {
+            discard;
+        }
+
+        sprite_uv.x = saturate((input.uv.x - left) / max(right - left, 1e-5));
+    }
+
+    float4 result = Sprite.SampleLevel(LinearSampler, sprite_uv, 0.0);
+    result *= TINT;
+    if (result.a <= 1e-4)
+    {
+        discard;
+    }
+    return result;
+}
 #endif
 """,
     "rx_anim_efmi_normal.hlsli": r"""#ifndef RX_ANIM_EFMI_NORMAL_HLSLI
