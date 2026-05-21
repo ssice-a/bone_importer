@@ -1331,7 +1331,13 @@ def write_runtime_hlsl_files(output_directory: str) -> tuple[str, ...]:
     hlsl_dir = os.path.join(os.path.abspath(output_directory or "."), "hlsl")
     os.makedirs(hlsl_dir, exist_ok=True)
     paths = []
-    for file_name, content in HLSL_FILES.items():
+    hlsl_files = dict(HLSL_FILES)
+    # Keep the coordinate contract fresh even in long-lived Blender sessions
+    # where runtime_ini may outlive a reloaded coordinate_contract module.
+    hlsl_files["rx_anim_coordinate_contract.hlsli"] = hlsl_coordinate_contract()
+    for file_name, content in hlsl_files.items():
+        if not str(content or "").strip():
+            raise RuntimeError(f"Refusing to write empty runtime HLSL file: {file_name}")
         path = os.path.join(hlsl_dir, file_name)
         with open(path, "w", encoding="utf-8", newline="\n") as hlsl_file:
             hlsl_file.write(content.strip() + "\n")

@@ -2,6 +2,7 @@ import unittest
 import importlib
 import re
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -12,7 +13,7 @@ OPERATORS_SOURCE = Path(__file__).resolve().parents[1] / "operators.py"
 BONE_PAYLOAD_SOURCE = Path(__file__).resolve().parents[1] / "core" / "bone_payload_export.py"
 
 
-def _load_runtime_ini_builder():
+def _load_runtime_ini_module():
     core_package = types.ModuleType("core")
     core_package.__path__ = [str(RUNTIME_INI_SOURCE.parent)]
     sys.modules.setdefault("core", core_package)
@@ -26,7 +27,11 @@ def _load_runtime_ini_builder():
     manifest_stub = types.ModuleType("core.manifest")
     manifest_stub.load_export_manifest = lambda _output_directory: {}
     sys.modules["core.manifest"] = manifest_stub
-    return importlib.import_module("core.runtime_ini").build_runtime_ini
+    return importlib.import_module("core.runtime_ini")
+
+
+def _load_runtime_ini_builder():
+    return _load_runtime_ini_module().build_runtime_ini
 
 
 class RuntimeIniDispatchTests(unittest.TestCase):
@@ -66,6 +71,18 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("game1 = blender2;", contract_source)
         self.assertIn("game2 = -blender1;", contract_source)
         self.assertNotIn("game0 = float4(blender0.x, -blender0.y, -blender0.z, -blender0.w);", contract_source)
+
+    def test_runtime_hlsl_writer_outputs_coordinate_contract_include_body(self):
+        runtime_ini = _load_runtime_ini_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_ini.write_runtime_hlsl_files(temp_dir)
+            contract_path = Path(temp_dir) / "hlsl" / "rx_anim_coordinate_contract.hlsli"
+            contract_hlsl = contract_path.read_text(encoding="utf-8")
+
+        self.assertIn("RxConvertSkinRowsFromBlenderToGame", contract_hlsl)
+        self.assertIn("RxMirrorSkinRowsOnX", contract_hlsl)
+        self.assertGreater(len(contract_hlsl.strip()), 200)
 
     def test_cb1_redirect_points_to_palette_window_start_like_yv(self):
         source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
