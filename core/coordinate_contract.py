@@ -58,10 +58,16 @@ def mirror_uv_u(uv: Sequence[float]) -> tuple[float, float]:
 
 
 def resolve_object_mirror_x(obj, default: bool | None = None) -> bool:
-    """Resolve the mirror-X rule from common importer metadata."""
+    """Resolve the mirror-X export rule.
+
+    Bone Importer owns this decision.  Importer metadata is only a compatibility
+    fallback for older scenes that have not saved the explicit export checkbox.
+    """
 
     fallback = RX_RUNTIME_COORDINATE_CONTRACT.mirror_x_default if default is None else bool(default)
-    value = _object_get(obj, "bmc_mirror_flip", None)
+    value = _object_get(obj, "bi_export_mirror_x", None)
+    if value is None:
+        value = _object_get(obj, "bmc_mirror_flip", None)
     if value is None:
         value = _object_get(obj, "modimp_mirror_flip", None)
     if value is None:
@@ -70,10 +76,12 @@ def resolve_object_mirror_x(obj, default: bool | None = None) -> bool:
 
 
 def resolve_object_uv_mirror_u(obj, default: bool | None = None) -> bool:
-    """Resolve explicit horizontal UV mirroring from object metadata."""
+    """Resolve the explicit Blender-UV to game-UV U adapter."""
 
     fallback = RX_RUNTIME_COORDINATE_CONTRACT.uv_mirror_u_default if default is None else bool(default)
-    value = _object_get(obj, "bmc_uv_mirror_u", None)
+    value = _object_get(obj, "bi_export_uv_mirror_u", None)
+    if value is None:
+        value = _object_get(obj, "bmc_uv_mirror_u", None)
     if value is None:
         value = _object_get(obj, "bmc_mirror_uv_u", None)
     if value is None:
@@ -86,10 +94,12 @@ def resolve_object_uv_mirror_u(obj, default: bool | None = None) -> bool:
 
 
 def resolve_object_uv_flip_v(obj, default: bool | None = None) -> bool:
-    """Resolve the UV V-flip rule from common importer metadata."""
+    """Resolve the Blender-UV to game-UV V adapter."""
 
     fallback = RX_RUNTIME_COORDINATE_CONTRACT.uv_flip_v_default if default is None else bool(default)
-    value = _object_get(obj, "bmc_uv_flip_v", None)
+    value = _object_get(obj, "bi_export_uv_flip_v", None)
+    if value is None:
+        value = _object_get(obj, "bmc_uv_flip_v", None)
     if value is None:
         value = _object_get(obj, "modimp_flip_v", None)
     if value is None:

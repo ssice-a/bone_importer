@@ -253,6 +253,9 @@ def draw_part_manifest_rows(draw_parts) -> list[dict]:
             "morph_source_object": draw_part.morph_source_object.name if draw_part.morph_source_object else "",
             "vb_layout_profile": draw_part.vb_layout_profile,
             "buffer_correction_mode": draw_part.buffer_correction_mode,
+            "export_mirror_x": bool(getattr(draw_part.source_object, "bi_export_mirror_x", True)),
+            "export_uv_mirror_u": bool(getattr(draw_part.source_object, "bi_export_uv_mirror_u", False)),
+            "export_uv_flip_v": bool(getattr(draw_part.source_object, "bi_export_uv_flip_v", True)),
             "base_position_path": draw_part.base_position_path,
             "base_position_stride": int(draw_part.base_position_stride),
         }

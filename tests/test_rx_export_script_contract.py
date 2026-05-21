@@ -19,9 +19,12 @@ class RxExportScriptContractTests(unittest.TestCase):
     def test_replacement_geometry_writes_explicit_coordinate_contract(self):
         source = SCRIPT_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('source["bmc_mirror_flip"]', source)
-        self.assertIn('source["bmc_uv_mirror_u"]', source)
-        self.assertIn('source["bmc_uv_flip_v"]', source)
+        self.assertIn("source.bi_export_mirror_x", source)
+        self.assertIn("source.bi_export_uv_mirror_u", source)
+        self.assertIn("source.bi_export_uv_flip_v", source)
+        self.assertIn("target.bi_export_mirror_x", source)
+        self.assertIn("target.bi_export_uv_mirror_u", source)
+        self.assertIn("target.bi_export_uv_flip_v", source)
 
     def test_replacements_disable_v_flip_for_current_rx_scene(self):
         replacement_geometry = _replacement_geometry_literal()

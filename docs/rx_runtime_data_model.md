@@ -77,9 +77,9 @@ Current RX contract:
 
 ```text
 name = RX_RUNTIME_YV_AXIS
-position / normal / tangent = mirror Blender X into game X
-UV = mirror U only when the DrawPart explicitly opts in
-UV = flip V by default
+position / normal / tangent = mirror Blender X into game X when Export Mirror X is enabled
+UV = export adapter only: mirror U only when the DrawPart explicitly opts in
+UV = export adapter only: flip V by default
 bitangent sign = flip when exactly one of mirror-X or flip-V is active
 skin matrix rows = YV row mapping:
     YV/EFMI axis conversion itself is not a mirror.
@@ -96,16 +96,16 @@ The Python truth source is:
 core/coordinate_contract.py
 ```
 
-Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, UV mirroring/flipping, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror. RX imported mesh mirror is handled as vector-value conversion for geometry and as `Mx * skin * Mx` on final skin rows; it never changes slot ids.
+Callers must not inline their own copy of these rules. Geometry export uses the contract helpers for position, normal, tangent, UV mirroring/flipping, and bitangent handedness. Runtime HLSL is emitted through `rx_anim_coordinate_contract.hlsli`, generated from the same module. Keep geometry VB conversion, slot binding, and bone palette axis conversion explicit: YV/EFMI's axis change is not a mirror. RX mirror export is controlled by Bone Importer's explicit `bi_export_mirror_x` setting, default enabled. When enabled, geometry vectors are mirrored and final skin rows use `Mx * skin * Mx`; it never changes slot ids.
 
 UV U mirroring is explicit:
 
 ```text
-default imported-game round trip: U unchanged, V flipped
-explicit replacement UV mirror:  U = 1 - U, V flipped
+default Blender-to-game export: U unchanged, V flipped
+explicit UV adapter:           U = 1 - U, V flipped
 ```
 
-Do not infer U mirroring from `bmc_mirror_flip`. Some imported game meshes need a reversible round-trip, while replacement meshes may need an authored UV mirror adapter.
+Do not infer U mirroring from `bi_export_mirror_x` or importer metadata. UV export is only a Blender-UV to game-UV adapter. Imported game meshes were already converted once to display correctly in Blender, so export applies the inverse adapter. External authored meshes also start from Blender-correct UVs and use the same game-format adapter.
 
 Slot ids are governed by the Slot Contract:
 

@@ -98,6 +98,9 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
                 binding_box.prop(active_object, "bi_cb1_profile")
                 binding_box.prop(active_object, "bi_vb_layout_profile")
                 binding_box.prop(active_object, "bi_buffer_correction_mode")
+                binding_box.prop(active_object, "bi_export_mirror_x")
+                binding_box.prop(active_object, "bi_export_uv_mirror_u")
+                binding_box.prop(active_object, "bi_export_uv_flip_v")
 
                 bone_plan = binding_box.box()
                 bone_plan.label(text="Bone Payload", icon="BONE_DATA")
@@ -130,6 +133,11 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         animation_box.prop(scene, "bi_animation_frame_step")
         animation_box.prop(scene, "bi_animation_fps")
         animation_box.prop(scene, "bi_animation_presents_per_step")
+        export_space_box = animation_box.box()
+        export_space_box.label(text="Default Export Adapters", icon="ORIENTATION_GLOBAL")
+        export_space_box.prop(scene, "bi_export_mirror_x")
+        export_space_box.prop(scene, "bi_export_uv_mirror_u")
+        export_space_box.prop(scene, "bi_export_uv_flip_v")
         animation_button_row = animation_box.row(align=True)
         animation_button_row.operator("object.bi_export_animation", text="Export Bone Payload", icon="EXPORT")
         animation_box.label(

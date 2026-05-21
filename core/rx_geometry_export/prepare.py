@@ -54,9 +54,9 @@ def prepare_geometry_export_collection(
     timings["palettes"] = time.perf_counter() - stage_start
 
     stage_start = time.perf_counter()
-    mirror_flip_default = bool(getattr(context.scene, "bmc_mirror_flip", True))
-    uv_mirror_u_default = bool(getattr(context.scene, "bmc_uv_mirror_u", False))
-    uv_flip_v_default = bool(getattr(context.scene, "bmc_uv_flip_v", True))
+    mirror_flip_default = bool(getattr(context.scene, "bi_export_mirror_x", True))
+    uv_mirror_u_default = bool(getattr(context.scene, "bi_export_uv_mirror_u", False))
+    uv_flip_v_default = bool(getattr(context.scene, "bi_export_uv_flip_v", True))
     geometry_records = write_part_geometry_buffers(
         buffer_dir,
         export_plan.parts,

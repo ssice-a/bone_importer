@@ -28,6 +28,9 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_previous_offset"),
     (bpy.types.Object, "bi_buffer_size"),
     (bpy.types.Object, "bi_buffer_correction_mode"),
+    (bpy.types.Object, "bi_export_mirror_x"),
+    (bpy.types.Object, "bi_export_uv_mirror_u"),
+    (bpy.types.Object, "bi_export_uv_flip_v"),
     (bpy.types.Object, "bi_base_position_path"),
     (bpy.types.Object, "bi_base_position_stride"),
     (bpy.types.Object, "bi_match_priority"),
@@ -52,6 +55,9 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Scene, "bi_animation_presents_per_step"),
     (bpy.types.Scene, "bi_animation_loop_start"),
     (bpy.types.Scene, "bi_animation_loop_end"),
+    (bpy.types.Scene, "bi_export_mirror_x"),
+    (bpy.types.Scene, "bi_export_uv_mirror_u"),
+    (bpy.types.Scene, "bi_export_uv_flip_v"),
     (bpy.types.Scene, "bi_morph_include_normals"),
     (bpy.types.Scene, "bi_morph_include_tangents"),
     (bpy.types.Scene, "bi_morph_channel_mode"),
@@ -182,6 +188,31 @@ def register_addon_properties():
         items=BUFFER_CORRECTION_ITEMS,
         default=BUFFER_CORRECTION_NONE,
         description="Optional extra correction used by special buffers such as eyelashes.",
+    )
+    bpy.types.Object.bi_export_mirror_x = bpy.props.BoolProperty(
+        name="Export Mirror X",
+        default=True,
+        description=(
+            "Mirror this DrawPart on X during RX export. Enable this when the "
+            "model was imported/mirrored for Blender display; disable it for "
+            "meshes that are already authored in the runtime X orientation."
+        ),
+    )
+    bpy.types.Object.bi_export_uv_mirror_u = bpy.props.BoolProperty(
+        name="Export UV Mirror U",
+        default=False,
+        description=(
+            "Horizontally mirror UVs during export. This is a UV-format adapter "
+            "only and is not implied by Export Mirror X."
+        ),
+    )
+    bpy.types.Object.bi_export_uv_flip_v = bpy.props.BoolProperty(
+        name="Export UV Flip V",
+        default=True,
+        description=(
+            "Flip Blender V coordinates back to the game texture coordinate "
+            "space during export."
+        ),
     )
     bpy.types.Object.bi_base_position_path = bpy.props.StringProperty(
         name="Base Position VB",
@@ -339,6 +370,21 @@ def register_addon_properties():
         default=-1,
         min=-1,
         description="Preferred loop end source frame. Use -1 to default to the last exported frame.",
+    )
+    bpy.types.Scene.bi_export_mirror_x = bpy.props.BoolProperty(
+        name="Default Export Mirror X",
+        default=True,
+        description="Default X mirror setting used by RX geometry export when an object has no explicit override.",
+    )
+    bpy.types.Scene.bi_export_uv_mirror_u = bpy.props.BoolProperty(
+        name="Default Export UV Mirror U",
+        default=False,
+        description="Default horizontal UV mirror used by RX geometry export. Keep off unless the Blender UVs need an inverse U adapter.",
+    )
+    bpy.types.Scene.bi_export_uv_flip_v = bpy.props.BoolProperty(
+        name="Default Export UV Flip V",
+        default=True,
+        description="Default Blender-to-game UV V conversion used by RX geometry export.",
     )
     bpy.types.Scene.bi_morph_include_normals = bpy.props.BoolProperty(
         name="Morph Normals",

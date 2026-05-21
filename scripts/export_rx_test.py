@@ -322,9 +322,9 @@ def _export_geometry_with_rx(runtime_targets: dict):
         source = bpy.data.objects.get(config["geometry_object"])
         if source is None or source.type != "MESH":
             raise RuntimeError(f"Replacement geometry mesh not found: {config['geometry_object']}")
-        source["bmc_mirror_flip"] = bool(config.get("mirror_flip", True))
-        source["bmc_uv_mirror_u"] = bool(config.get("uv_mirror_u", False))
-        source["bmc_uv_flip_v"] = bool(config.get("uv_flip_v", True))
+        source.bi_export_mirror_x = bool(config.get("mirror_flip", True))
+        source.bi_export_uv_mirror_u = bool(config.get("uv_mirror_u", False))
+        source.bi_export_uv_flip_v = bool(config.get("uv_flip_v", True))
         region = bpy.data.collections.new(target_name)
         root.children.link(region)
         _link_object_once(region, source)
@@ -369,6 +369,9 @@ def _configure_geometry_draw_part(target, config, geometry_record, geometry_obje
     target.bi_base_position_stride = int(vb0_record.get("stride", 0) or 0)
     target.bi_vb_layout_profile = config["vb_profile"]
     target.bi_cb1_profile = config["cb1"]
+    target.bi_export_mirror_x = bool(config.get("mirror_flip", True))
+    target.bi_export_uv_mirror_u = bool(config.get("uv_mirror_u", False))
+    target.bi_export_uv_flip_v = bool(config.get("uv_flip_v", True))
 
     if not str(getattr(target, "bi_bone_slot_map_json", "") or "").strip():
         raise RuntimeError(
@@ -395,6 +398,9 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
     )
     scene.bi_morph_include_normals = True
     scene.bi_morph_include_tangents = True
+    scene.bi_export_mirror_x = True
+    scene.bi_export_uv_mirror_u = False
+    scene.bi_export_uv_flip_v = True
 
     geometry_by_key = {_geometry_key(record): record for record in geometry_export["geometry_records"]}
     configured = {}
