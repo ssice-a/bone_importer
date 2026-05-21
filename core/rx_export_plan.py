@@ -8,7 +8,7 @@ with ``name`` and ``type`` attributes.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Iterable
 
 
@@ -118,11 +118,15 @@ class _PartSource:
 def build_rx_export_plan(
     root_collection,
     analyze_mesh: Callable[[object], MeshRouteAnalysis],
+    *,
+    max_final_bones_per_part: int = 256,
 ) -> RXExportPlan:
     """Build an RX Export v3 plan from an export collection tree."""
 
     if root_collection is None:
         raise RXExportPlanError("RX export root collection is not set")
+    if max_final_bones_per_part <= 0:
+        raise RXExportPlanError("max_final_bones_per_part must be positive")
 
     part_sources: list[_PartSource] = []
     for child in getattr(root_collection, "children", []) or []:
@@ -136,10 +140,21 @@ def build_rx_export_plan(
 
     parts_by_draw_key: dict[str, list[PartPlan]] = {}
     identity_by_draw_key: dict[str, DrawPartIdentity] = {}
+    used_part_indices_by_draw_key: dict[str, set[int]] = {}
+    for source in part_sources:
+        used_part_indices_by_draw_key.setdefault(source.identity.draw_key, set()).add(source.part_index)
+
     for source in part_sources:
         part = _part_plan_from_source(source, analyze_mesh)
-        parts_by_draw_key.setdefault(source.identity.draw_key, []).append(part)
+        split_parts = _split_part_by_own_palette_if_needed(
+            part,
+            used_part_indices_by_draw_key.setdefault(source.identity.draw_key, set()),
+            max_final_bones_per_part=max_final_bones_per_part,
+        )
+        parts_by_draw_key.setdefault(source.identity.draw_key, []).extend(split_parts)
         identity_by_draw_key[source.identity.draw_key] = source.identity
+
+    _validate_single_part_membership(part for parts in parts_by_draw_key.values() for part in parts)
 
     draw_parts: list[DrawPartPlan] = []
     for draw_key in sorted(parts_by_draw_key):
@@ -317,6 +332,85 @@ def _resolve_deform_chain(analysis: MeshRouteAnalysis) -> str:
     return DEFORM_NONE
 
 
+def _split_part_by_own_palette_if_needed(
+    part: PartPlan,
+    used_part_indices: set[int],
+    *,
+    max_final_bones_per_part: int,
+) -> list[PartPlan]:
+    own_union = _own_bone_union(part.segments)
+    if len(own_union) <= max_final_bones_per_part:
+        return [part]
+
+    bins: list[list[DrawSegmentPlan]] = []
+    bin_own_bones: list[set[str]] = []
+    non_own_segments: list[DrawSegmentPlan] = []
+
+    for segment in part.segments:
+        if segment.final_skin_palette != FINAL_SKIN_OWN:
+            non_own_segments.append(segment)
+            continue
+        segment_bones = set(segment.own_bones)
+        if len(segment_bones) > max_final_bones_per_part:
+            raise RXExportPlanError(
+                f"{part.identity.collection_name}/{part.source_part_name}/{segment.object_name}: "
+                f"uses {len(segment_bones)} OWN final bones; object-level splitting cannot keep it under "
+                f"{max_final_bones_per_part}"
+            )
+        placed = False
+        for bin_index, existing_bones in enumerate(bin_own_bones):
+            if len(existing_bones.union(segment_bones)) <= max_final_bones_per_part:
+                bins[bin_index].append(segment)
+                existing_bones.update(segment_bones)
+                placed = True
+                break
+        if not placed:
+            bins.append([segment])
+            bin_own_bones.append(set(segment_bones))
+
+    if not bins:
+        return [part]
+    bins[0] = [*non_own_segments, *bins[0]]
+
+    split_parts: list[PartPlan] = []
+    for bin_index, segments in enumerate(bins):
+        if bin_index == 0:
+            part_index = part.part_index
+        else:
+            part_index = _next_free_part_index(used_part_indices)
+            used_part_indices.add(part_index)
+        reindexed_segments = tuple(
+            replace(segment, segment_index=new_index)
+            for new_index, segment in enumerate(segments)
+        )
+        split_parts.append(
+            replace(
+                part,
+                part_index=part_index,
+                source_part_name=part.source_part_name if bin_index == 0 else f"{part.source_part_name}_auto{bin_index:02d}",
+                segments=reindexed_segments,
+                generated=bin_index > 0,
+                split_reason="" if bin_index == 0 else f"own_palette_split_over_{max_final_bones_per_part}_bones",
+            )
+        )
+    return split_parts
+
+
+def _own_bone_union(segments: Iterable[DrawSegmentPlan]) -> set[str]:
+    bones: set[str] = set()
+    for segment in segments:
+        if segment.final_skin_palette == FINAL_SKIN_OWN:
+            bones.update(str(bone) for bone in segment.own_bones if str(bone))
+    return bones
+
+
+def _next_free_part_index(used_part_indices: set[int]) -> int:
+    part_index = 0
+    while part_index in used_part_indices:
+        part_index += 1
+    return part_index
+
+
 def _iter_meshes_recursive(collection):
     seen: set[str] = set()
 
@@ -337,3 +431,18 @@ def _iter_meshes_recursive(collection):
 
 def _is_mesh_object(obj) -> bool:
     return str(getattr(obj, "type", "") or "") == "MESH"
+
+
+def _validate_single_part_membership(parts: Iterable[PartPlan]) -> None:
+    memberships: dict[str, list[str]] = {}
+    for part in parts:
+        owner = f"{part.identity.draw_key}/{part.part_name}"
+        for segment in part.segments:
+            memberships.setdefault(segment.object_name, []).append(owner)
+    duplicated = {name: owners for name, owners in memberships.items() if len(owners) > 1}
+    if not duplicated:
+        return
+    object_name, owners = next(iter(duplicated.items()))
+    raise RXExportPlanError(
+        f"{object_name}: the same object is present in multiple export parts: {', '.join(owners)}"
+    )

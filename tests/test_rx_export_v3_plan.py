@@ -235,6 +235,63 @@ class RXExportV3PlanTests(unittest.TestCase):
         self.assertEqual(FINAL_SKIN_OWN, segment.final_skin_palette)
         self.assertTrue(segment.geometry_required)
 
+    def test_same_object_cannot_be_exported_by_multiple_parts(self):
+        shared_mesh = FakeObject("shared_mesh")
+        root = FakeCollection(
+            "RX Export Collection",
+            children=[
+                FakeCollection(
+                    "e78c7068-10590-0",
+                    children=[
+                        FakeCollection("part00", objects=[shared_mesh]),
+                        FakeCollection("part01", objects=[shared_mesh]),
+                    ],
+                )
+            ],
+        )
+
+        with self.assertRaisesRegex(RXExportPlanError, "multiple export parts"):
+            build_rx_export_plan(root, lambda _obj: MeshRouteAnalysis(source_slots=(0,)))
+
+    def test_own_final_palette_over_limit_splits_by_object(self):
+        mesh_a = FakeObject("own_a")
+        mesh_b = FakeObject("own_b")
+        root = FakeCollection(
+            "RX Export Collection",
+            children=[
+                FakeCollection(
+                    "1377f2c3-59679-0",
+                    objects=[mesh_a, mesh_b],
+                )
+            ],
+        )
+        analyses = {
+            "own_a": MeshRouteAnalysis(own_bones=("A0", "A1")),
+            "own_b": MeshRouteAnalysis(own_bones=("B0", "B1")),
+        }
+
+        plan = build_rx_export_plan(root, lambda obj: analyses[obj.name], max_final_bones_per_part=2)
+
+        draw_part = plan.draw_parts[0]
+        self.assertTrue(draw_part.skip_original)
+        self.assertEqual(["part00", "part01"], [part.part_name for part in draw_part.parts])
+        self.assertEqual(["own_a"], [segment.object_name for segment in draw_part.parts[0].segments])
+        self.assertEqual(["own_b"], [segment.object_name for segment in draw_part.parts[1].segments])
+        self.assertTrue(draw_part.parts[1].generated)
+
+    def test_single_own_segment_over_limit_reports_clear_error(self):
+        root = FakeCollection(
+            "RX Export Collection",
+            children=[FakeCollection("1377f2c3-59679-0", objects=[FakeObject("too_many_bones")])],
+        )
+
+        with self.assertRaisesRegex(RXExportPlanError, "uses 3 OWN final bones"):
+            build_rx_export_plan(
+                root,
+                lambda _obj: MeshRouteAnalysis(own_bones=("A", "B", "C")),
+                max_final_bones_per_part=2,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
