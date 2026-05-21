@@ -76,6 +76,21 @@ slot contract
 Objects inside the IB collection are export inputs. There is no separate
 `Source` / `Attach` / `Reference` child collection in v3.
 
+An IB collection should contain only the visible mesh objects the user intends
+to export for that DrawPart. If a mesh needs game-compatible numeric vertex
+groups but the visible source mesh keeps authoring names, use a Slot Adapter:
+
+```text
+Visible Source Mesh -> geometry, UVs, normals/tangents, shape keys, draw name
+Slot Adapter        -> temporary numeric vertex groups / final vb2 mapping
+```
+
+The Slot Adapter is an implementation detail. Export may create a temporary
+copy of the visible source mesh, copy numeric groups from the adapter, run RX
+Geometry Export, then restore the collection to the visible source mesh. Runtime
+manifests and generated INI must name the visible source mesh, not the temporary
+adapter.
+
 Default geometry layout:
 
 ```text
@@ -457,6 +472,14 @@ Every exported model draw binds the complete set of VB/IB slots required by the
 target VS. Only slots changed by the deform chain are runtime UAVs. Unchanged
 slots are still exported and bound as `DrawVBn` resources.
 
+The generated INI must annotate every replacement draw with the visible source
+mesh identity:
+
+```ini
+; draw segment: 005_睫眉
+drawindexedinstanced = ...
+```
+
 The final draw always consumes `DrawVB` resources:
 
 ```text
@@ -660,12 +683,19 @@ Rules:
 - Mirror export changes vectors and skin-row conversion; it does not rename or
   remap bone slots.
 - UV export is an adapter from Blender-correct UVs to game-format UVs.
+- Explicit Bone Importer export properties such as `bi_export_uv_flip_v` win
+  over imported-helper metadata such as `bmc_uv_flip_v`.
 - Source/game slot ids keep their numeric meaning unless an explicit Bone Slot
   Map says otherwise.
 
 Avoid "fixing" mirror issues by matching left/right bones heuristically. If a
 mesh was imported mirrored, the exporter must apply the corresponding coordinate
 contract consistently across geometry, bone matrices, morph data, and HLSL.
+
+Imported game meshes were already transformed once so they display correctly in
+Blender. Export must apply the inverse game-format adapter. External authored
+meshes also start from Blender-correct UVs, so they use the same explicit export
+adapter instead of inheriting stale importer flags.
 
 ## Implementation Boundaries
 

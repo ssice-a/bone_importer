@@ -34,6 +34,8 @@ _Avoid_: local mirror fix, one-off axis conversion
 
 UV mirroring belongs to this contract too. U mirroring is explicit metadata for replacement geometry; it is not inferred from X-axis mesh mirroring because imported game meshes must round-trip without changing UV identity.
 
+UV export is a game-format adapter, not a Blender display preference. The exported `vb1` values must match the target game's captured UV convention for that DrawPart. Importer metadata such as `bmc_uv_flip_v` is only a fallback for old scenes; explicit Bone Importer export properties such as `bi_export_uv_flip_v` are the source of truth for a new export.
+
 **Slot Contract**:
 The DrawPart-local runtime slot namespace that decides which source bone writes each game palette slot. Runtime slot ids always keep their numeric meaning; BMC-imported mirror metadata is handled by the Runtime Coordinate Contract, not by automatic source-bone matching. Explicit Bone Slot Map entries are the only supported way to make a non-identity source binding.
 _Avoid_: global slot namespace, hidden cross-DrawPart slot sharing
@@ -41,6 +43,8 @@ _Avoid_: global slot namespace, hidden cross-DrawPart slot sharing
 **IB Collection**:
 The Blender collection named `<hash>-<match_index_count>-<first_index>` that carries one runtime DrawPart context. Mesh objects placed directly inside it form implicit `part00`; explicit `partNN` children create separate part buffer sets.
 _Avoid_: source folder, attach folder, object-name routing
+
+An IB Collection should contain only the mesh objects the user intends to export for that DrawPart. Prepared helper meshes may be used internally as Slot Adapters, but they should not be part of the user's visible export collection unless the user is intentionally exporting that helper mesh.
 
 **Draw Segment**:
 One runtime `drawindexed` range inside an exported part. A mesh object normally becomes one Draw Segment; segments in the same part share the merged VB/IB but may bind different final palettes.
@@ -74,6 +78,10 @@ _Avoid_: CPU skinning export
 The user-supplied `capture_manifest.json` that provides the game vertex layout table used by RX Geometry Export. It is a required dependency for writing game-compatible VB/IB buffers, and its path should be explicit UI configuration.
 _Avoid_: hidden hardcoded layout path, implicit external-plugin state
 
+**Slot Adapter**:
+A temporary or helper mesh that supplies game-compatible numeric vertex groups for RX Geometry Export while the visible source mesh supplies the actual geometry, UVs, and shape keys.
+_Avoid_: user-facing duplicate export mesh, hidden replacement object
+
 **Morph-Only Animation**:
 An animation route that only applies Morph Payload data to a target vertex buffer while sharing the Clip timeline.
 _Avoid_: shape-key mesh export
@@ -95,6 +103,7 @@ _Avoid_: shape-key mesh export
 - If an **IB Collection** exports any geometry, the original game draw for that **DrawPart** is skipped.
 - A **Draw Segment** consumes the final DrawVB/DrawIB range and whichever final palette its vertex weights target.
 - A **Pre-Skin Deformer** always runs in the **Before Stage** and prepares DrawVB ranges for later **Draw Segments**.
+- A **Slot Adapter** may be used to write `vb2` correctly, but the visible source mesh remains the Draw Segment identity and morph source.
 
 ## Example Dialogue
 

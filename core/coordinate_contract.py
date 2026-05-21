@@ -166,10 +166,13 @@ def hlsl_coordinate_contract() -> str:
 def _object_get(obj, key: str, default=None):
     if obj is None:
         return default
+    missing = object()
     get = getattr(obj, "get", None)
     if callable(get):
         try:
-            return get(key, default)
+            value = get(key, missing)
+            if value is not missing:
+                return value
         except TypeError:
             pass
     return getattr(obj, key, default)

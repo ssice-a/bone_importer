@@ -46,6 +46,14 @@ class CoordinateContractTests(unittest.TestCase):
         self.assertFalse(coordinate_contract.resolve_object_uv_flip_v({"bmc_uv_flip_v": False}, True))
         self.assertTrue(coordinate_contract.resolve_object_uv_flip_v({"modimp_flip_v": True}, False))
 
+    def test_explicit_rna_export_property_overrides_importer_custom_metadata(self):
+        class FakeBlenderObject(dict):
+            bi_export_uv_flip_v = False
+
+        obj = FakeBlenderObject(bmc_uv_flip_v=True)
+
+        self.assertFalse(coordinate_contract.resolve_object_uv_flip_v(obj, True))
+
     def test_yv_axis_skin_rows_matches_reference_shader(self):
         rows = coordinate_contract.yv_axis_skin_rows(
             (1.0, 2.0, 3.0, 4.0),

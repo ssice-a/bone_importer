@@ -180,6 +180,7 @@ class RuntimeIniDispatchTests(unittest.TestCase):
                     "geometry": [
                         {
                             "resource_suffix": "e78c7068_10590_0_part00",
+                            "object_names": ["000_面"],
                             "index_buffer": {"file_path": "Buffer/e78c7068-10590-0_part00-Index.buf", "index_count": 10590},
                             "vertex_buffers": {
                                 "vb0": {"file_path": "Buffer/e78c7068-10590-0_part00-Position.buf", "stride": 16},
@@ -201,6 +202,7 @@ class RuntimeIniDispatchTests(unittest.TestCase):
                     "geometry": [
                         {
                             "resource_suffix": "2009f0d6_1356_0_part00",
+                            "object_names": ["005_睫眉"],
                             "index_buffer": {"file_path": "Buffer/2009f0d6-1356-0_part00-Index.buf", "index_count": 1356},
                             "vertex_buffers": {
                                 "vb0": {"file_path": "Buffer/2009f0d6-1356-0_part00-Position.buf", "stride": 40},
@@ -252,6 +254,12 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("vb3 = ref ResourceGeometry_e78c7068_10590_0_part00_vb0", ini)
         self.assertIn("vb0 = ref ResourceGeometry_2009f0d6_1356_0_part00_vb0", ini)
         self.assertIn("vb3 = ref ResourceGeometry_2009f0d6_1356_0_part00_vb3", ini)
+        self.assertIn("; draw segment: 005_睫眉", ini)
+        self.assertIn(
+            "; draw segment: 005_睫眉\n"
+            "drawindexedinstanced = 1356,INSTANCE_COUNT,0,0,FIRST_INSTANCE",
+            ini,
+        )
 
     def test_runtime_morph_shaders_write_to_u5_to_avoid_bone_chain_u0_collision(self):
         source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")

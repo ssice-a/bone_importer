@@ -68,6 +68,18 @@ def _geometry_resource_suffix(record: dict) -> str:
     return sanitize_export_name(str(record.get("resource_suffix", "") or ""), "geometry")
 
 
+def _draw_segment_comment(record: dict) -> str:
+    object_names = [
+        str(object_name or "").strip()
+        for object_name in list(record.get("object_names", []) or [])
+        if str(object_name or "").strip()
+    ]
+    if object_names:
+        return ", ".join(object_names)
+    resource_suffix = str(record.get("resource_suffix", "") or "").strip()
+    return resource_suffix or "unknown"
+
+
 def resolve_runtime_ini_path(output_directory: str, clip_name: str) -> str:
     safe_clip_name = sanitize_export_name(normalize_clip_name(clip_name), "rxanimin")
     return os.path.join(os.path.abspath(output_directory or "."), f"{safe_clip_name}.ini")
@@ -397,6 +409,7 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
             _line(lines, f"vb3 = ref ResourceGeometry_{geometry_suffix}_vb0")
         index_buffer = dict(geometry_record.get("index_buffer", {}) or {})
         index_count = int(index_buffer.get("index_count", geometry_record.get("index_count", 0)) or 0)
+        _line(lines, f"; draw segment: {_draw_segment_comment(geometry_record)}")
         _line(lines, f"drawindexedinstanced = {index_count},INSTANCE_COUNT,0,0,FIRST_INSTANCE")
     _line(lines)
 

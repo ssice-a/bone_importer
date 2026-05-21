@@ -1,8 +1,9 @@
 """Export the current RX scene into a manifest-driven runtime package.
 
 This script is intentionally scene-specific for the current RX validation pass:
-it exports every draw part carried by the shared proxy armature, while using the
-prepared RXEXP replacement meshes for the face and eyelash/eyebrow geometry.
+it exports every draw part carried by the shared proxy armature.  Replacement
+geometry is authored from the visible source meshes; prepared RXEXP meshes are
+only used as temporary numeric-slot adapters for vb2.
 """
 
 from __future__ import annotations
@@ -19,12 +20,7 @@ import bpy
 REPO_PARENT = r"E:\vscode"
 DEFAULT_OUTPUT_DIR = r"E:\XXMI\EFMI\Mods\RX"
 OUTPUT_DIR = os.environ.get("RX_EXPORT_OUTPUT_DIR", DEFAULT_OUTPUT_DIR)
-BMC_CAPTURE_MANIFEST_CANDIDATES = (
-    os.environ.get("RX_BMC_CAPTURE_MANIFEST", ""),
-    r"E:\XXMI\EFMI\Mods\DISABLEDlxi\capture_manifest.json",
-    r"E:\XXMI\EFMI\Mods\lev\capture_manifest.json",
-    r"E:\XXMI\EFMI\Mods\lxi\capture_manifest.json",
-)
+CAPTURE_MANIFEST_ENV_KEYS = ("RX_CAPTURE_MANIFEST", "RX_BMC_CAPTURE_MANIFEST")
 # The RX validation scene's baked BoneX action is authored on 1..1680.
 # Keep these scene-specific defaults out of the stale 0..5670 source action
 # range; callers can still override them with RX_EXPORT_FRAME_*.
@@ -37,11 +33,12 @@ SOURCE_COLLECTION_NAME = "BMC Export Sources"
 PROXY_ARMATURE_NAME = "RX_SharedProxy"
 RUNTIME_COLLECTION_NAME = "RX Runtime DrawParts"
 GEOMETRY_EXPORT_COLLECTION_NAME = "RX Geometry Export Current"
+TEMP_GEOMETRY_OBJECT_PREFIX = "RXTMP_RX_"
 
 REPLACEMENT_GEOMETRY = {
     "e78c7068-10590-0": {
-        "geometry_object": "RXEXP_e78c7068-10590-0_000_\u9762.001",
-        "morph_source_object": "000_\u9762",
+        "geometry_object": "000_\u9762",
+        "slot_adapter_object": "RXEXP_e78c7068-10590-0_000_\u9762.001",
         "vb_profile": "PACKED16",
         "cb1": "NONE",
         "mirror_flip": True,
@@ -49,8 +46,8 @@ REPLACEMENT_GEOMETRY = {
         "uv_flip_v": False,
     },
     "2009f0d6-1356-0": {
-        "geometry_object": "RXEXP_2009f0d6-1356-0_005_\u776b\u7709.001",
-        "morph_source_object": "005_\u776b\u7709",
+        "geometry_object": "005_\u776b\u7709",
+        "slot_adapter_object": "RXEXP_2009f0d6-1356-0_005_\u776b\u7709.001",
         "vb_profile": "PNTA40",
         "cb1": "EYELASH",
         "mirror_flip": True,
@@ -79,8 +76,19 @@ def _write_json(path: str, payload: dict):
 
 def _resolve_bmc_capture_manifest() -> str:
     required_layouts = set(REPLACEMENT_GEOMETRY)
+    scene = getattr(bpy.context, "scene", None)
+    ui_path = ""
+    if scene is not None:
+        ui_path = str(getattr(scene, "bi_capture_manifest_path", "") or "").strip()
+        if ui_path:
+            ui_path = bpy.path.abspath(ui_path)
+    explicit_candidates = [
+        ui_path,
+        *(os.environ.get(key, "") for key in CAPTURE_MANIFEST_ENV_KEYS),
+        os.path.join(OUTPUT_DIR, "capture_manifest.json"),
+    ]
     existing_candidates = []
-    for candidate in BMC_CAPTURE_MANIFEST_CANDIDATES:
+    for candidate in explicit_candidates:
         if not candidate or not os.path.exists(candidate):
             continue
         existing_candidates.append(candidate)
@@ -92,7 +100,7 @@ def _resolve_bmc_capture_manifest() -> str:
         vertex_layout_table = dict(manifest.get("vertex_layout_table", {}) or {})
         if required_layouts.issubset(set(vertex_layout_table)):
             return candidate
-    searched = ", ".join(existing_candidates or [candidate for candidate in BMC_CAPTURE_MANIFEST_CANDIDATES if candidate])
+    searched = ", ".join(existing_candidates or [candidate for candidate in explicit_candidates if candidate])
     raise RuntimeError(
         "Missing BMC capture_manifest.json with required vertex layouts "
         f"{sorted(required_layouts)}; searched: {searched}"
@@ -277,6 +285,129 @@ def _link_object_once(collection, obj):
         collection.objects.link(obj)
 
 
+def _set_export_contract(obj, config: dict):
+    assignments = {
+        "bi_export_mirror_x": bool(config.get("mirror_flip", True)),
+        "bi_export_uv_mirror_u": bool(config.get("uv_mirror_u", False)),
+        "bi_export_uv_flip_v": bool(config.get("uv_flip_v", True)),
+    }
+    for property_name, value in assignments.items():
+        try:
+            setattr(obj, property_name, value)
+        except Exception:
+            pass
+        try:
+            obj[property_name] = value
+        except Exception:
+            pass
+
+
+def _remove_all_vertex_groups(obj):
+    while len(obj.vertex_groups):
+        obj.vertex_groups.remove(obj.vertex_groups[0])
+
+
+def _copy_numeric_vertex_groups(temp_obj, slot_adapter):
+    if len(temp_obj.data.vertices) != len(slot_adapter.data.vertices):
+        raise RuntimeError(
+            f"{temp_obj.name}: slot adapter {slot_adapter.name} vertex count mismatch "
+            f"({len(temp_obj.data.vertices)} != {len(slot_adapter.data.vertices)})"
+        )
+    _remove_all_vertex_groups(temp_obj)
+    numeric_groups = {
+        group.index: temp_obj.vertex_groups.new(name=group.name)
+        for group in slot_adapter.vertex_groups
+        if str(group.name).isdigit()
+    }
+    if not numeric_groups:
+        raise RuntimeError(f"{slot_adapter.name}: no numeric vertex groups available for vb2 export")
+    for vertex in slot_adapter.data.vertices:
+        for membership in vertex.groups:
+            target_group = numeric_groups.get(membership.group)
+            if target_group is None:
+                continue
+            target_group.add([vertex.index], float(membership.weight), "REPLACE")
+
+
+def _remove_modifiers(obj):
+    while len(obj.modifiers):
+        obj.modifiers.remove(obj.modifiers[0])
+
+
+def _make_geometry_export_object(target_name: str, config: dict):
+    geometry_source = bpy.data.objects.get(config["geometry_object"])
+    if geometry_source is None or geometry_source.type != "MESH":
+        raise RuntimeError(f"Replacement geometry mesh not found: {config['geometry_object']}")
+    _set_export_contract(geometry_source, config)
+
+    slot_adapter_name = str(config.get("slot_adapter_object", "") or "").strip()
+    if not slot_adapter_name:
+        return geometry_source, geometry_source, None
+
+    slot_adapter = bpy.data.objects.get(slot_adapter_name)
+    if slot_adapter is None or slot_adapter.type != "MESH":
+        raise RuntimeError(f"Replacement slot adapter mesh not found: {slot_adapter_name}")
+
+    export_obj = geometry_source.copy()
+    export_obj.data = geometry_source.data.copy()
+    export_obj.name = f"{TEMP_GEOMETRY_OBJECT_PREFIX}{target_name}_{geometry_source.name}"
+    export_obj.parent = None
+    export_obj.animation_data_clear()
+    _remove_modifiers(export_obj)
+    _copy_numeric_vertex_groups(export_obj, slot_adapter)
+    _set_export_contract(export_obj, config)
+    export_obj["rx_visible_source_object"] = geometry_source.name
+    export_obj["rx_slot_adapter_object"] = slot_adapter.name
+    return geometry_source, export_obj, slot_adapter
+
+
+def _restore_geometry_collection_to_sources(root, exported_targets: dict):
+    temp_objects = []
+    for target_name, exported in exported_targets.items():
+        region = root.children.get(target_name)
+        if region is None:
+            continue
+        for obj in tuple(region.objects):
+            if obj.name.startswith(TEMP_GEOMETRY_OBJECT_PREFIX):
+                temp_objects.append(obj)
+            region.objects.unlink(obj)
+        _link_object_once(region, exported["geometry_source"])
+    for obj in temp_objects:
+        mesh = getattr(obj, "data", None)
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if mesh is not None and getattr(mesh, "users", 0) == 0:
+            bpy.data.meshes.remove(mesh)
+
+
+def _rewrite_geometry_manifest_to_visible_sources(bmc_manifest: dict, exported_targets: dict):
+    for record in bmc_manifest.get("geometry_buffers", []) or []:
+        exported = exported_targets.get(_geometry_key(record))
+        if not exported:
+            continue
+        visible_name = exported["geometry_source"].name
+        record["object_names"] = [visible_name]
+        for draw in record.get("object_draws", []) or []:
+            draw["object_name"] = visible_name
+
+    for record in bmc_manifest.get("objects", []) or []:
+        target_key = (
+            f"{record.get('host_ib_hash', '')}-"
+            f"{int(record.get('host_match_index_count', 0) or 0)}-"
+            f"{int(record.get('host_match_first_index', 0) or 0)}"
+        )
+        exported = exported_targets.get(target_key)
+        if exported:
+            record["object"] = exported["geometry_source"].name
+
+    for record in bmc_manifest.get("palettes", []) or []:
+        exported = exported_targets.get(_geometry_key(record))
+        if not exported:
+            continue
+        visible_name = exported["geometry_source"].name
+        for usage in record.get("object_usages", []) or []:
+            usage["object"] = visible_name
+
+
 def _geometry_key(record: dict) -> str:
     return f"{record.get('ib_hash', '')}-{int(record.get('match_index_count', 0) or 0)}-{int(record.get('match_first_index', 0) or 0)}"
 
@@ -319,16 +450,15 @@ def _export_geometry_with_rx(runtime_targets: dict):
     for target_name, config in REPLACEMENT_GEOMETRY.items():
         if target_name not in runtime_targets:
             continue
-        source = bpy.data.objects.get(config["geometry_object"])
-        if source is None or source.type != "MESH":
-            raise RuntimeError(f"Replacement geometry mesh not found: {config['geometry_object']}")
-        source.bi_export_mirror_x = bool(config.get("mirror_flip", True))
-        source.bi_export_uv_mirror_u = bool(config.get("uv_mirror_u", False))
-        source.bi_export_uv_flip_v = bool(config.get("uv_flip_v", True))
+        geometry_source, export_object, slot_adapter = _make_geometry_export_object(target_name, config)
         region = bpy.data.collections.new(target_name)
         root.children.link(region)
-        _link_object_once(region, source)
-        exported_targets[target_name] = source
+        _link_object_once(region, export_object)
+        exported_targets[target_name] = {
+            "geometry_source": geometry_source,
+            "export_object": export_object,
+            "slot_adapter": slot_adapter,
+        }
 
     result = prepare_geometry_export_collection(
         context=bpy.context,
@@ -338,6 +468,8 @@ def _export_geometry_with_rx(runtime_targets: dict):
     )
     with open(result["manifest_path"], "r", encoding="utf-8") as manifest_file:
         bmc_manifest = json.load(manifest_file)
+    _rewrite_geometry_manifest_to_visible_sources(bmc_manifest, exported_targets)
+    _write_json(result["manifest_path"], bmc_manifest)
 
     records_by_key = {
         _geometry_key(record): record
@@ -347,19 +479,26 @@ def _export_geometry_with_rx(runtime_targets: dict):
     if missing_records:
         raise RuntimeError(f"BMC geometry export missing target(s): {', '.join(missing_records)}")
 
+    geometry_records = []
+    for target_name, exported in exported_targets.items():
+        record = dict(records_by_key[target_name])
+        record["object_names"] = [exported["geometry_source"].name]
+        geometry_records.append(record)
+    _restore_geometry_collection_to_sources(root, exported_targets)
+
     return {
         "result": result,
-        "geometry_objects": exported_targets,
-        "geometry_records": [records_by_key[target_name] for target_name in exported_targets],
+        "geometry_sources": {target_name: exported["geometry_source"] for target_name, exported in exported_targets.items()},
+        "geometry_records": geometry_records,
     }
 
 
-def _configure_geometry_draw_part(target, config, geometry_record, geometry_object):
+def _configure_geometry_draw_part(target, config, geometry_record, geometry_source):
     vb0_record = dict(geometry_record.get("vertex_buffers", {}).get("vb0", {}) or {})
     if not vb0_record.get("file_path"):
         raise RuntimeError(f"{target.name}: BMC geometry export has no vb0 Position buffer")
     morph_source_name = str(config.get("morph_source_object", "") or "").strip()
-    morph_source_object = bpy.data.objects.get(morph_source_name) if morph_source_name else geometry_object
+    morph_source_object = bpy.data.objects.get(morph_source_name) if morph_source_name else geometry_source
     if morph_source_object is None or morph_source_object.type != "MESH":
         raise RuntimeError(f"{target.name}: morph source mesh not found: {morph_source_name}")
 
@@ -386,6 +525,10 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
     runtime_collection = _new_collection(RUNTIME_COLLECTION_NAME)
     scene.bi_export_collection = runtime_collection
     scene.bi_animation_output_dir = OUTPUT_DIR
+    scene.bi_capture_manifest_path = os.environ.get(
+        "RX_CAPTURE_MANIFEST",
+        str(getattr(scene, "bi_capture_manifest_path", "") or ""),
+    )
     scene.bi_animation_clip_name = "rxanimin"
     scene.bi_animation_clip_id = 0
     scene.bi_animation_frame_start = _env_int("RX_EXPORT_FRAME_START", DEFAULT_FRAME_START)
@@ -412,10 +555,10 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
         if target_name in REPLACEMENT_GEOMETRY:
             config = REPLACEMENT_GEOMETRY[target_name]
             geometry_record = geometry_by_key[target_name]
-            geometry_object = geometry_export["geometry_objects"][target_name]
-            _configure_geometry_draw_part(target, config, geometry_record, geometry_object)
+            geometry_source = geometry_export["geometry_sources"][target_name]
+            _configure_geometry_draw_part(target, config, geometry_record, geometry_source)
             geometry_info = {
-                "geometry_object": geometry_object.name,
+                "geometry_object": geometry_source.name,
                 "base_position": target.bi_base_position_path,
                 "base_position_stride": int(target.bi_base_position_stride),
                 "index_count": int(geometry_record.get("index_buffer", {}).get("index_count", 0) or 0),

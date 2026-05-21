@@ -19,12 +19,21 @@ class RxExportScriptContractTests(unittest.TestCase):
     def test_replacement_geometry_writes_explicit_coordinate_contract(self):
         source = SCRIPT_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("source.bi_export_mirror_x", source)
-        self.assertIn("source.bi_export_uv_mirror_u", source)
-        self.assertIn("source.bi_export_uv_flip_v", source)
+        self.assertIn("def _set_export_contract", source)
+        self.assertIn('"bi_export_mirror_x"', source)
+        self.assertIn('"bi_export_uv_mirror_u"', source)
+        self.assertIn('"bi_export_uv_flip_v"', source)
+        self.assertIn("_set_export_contract(geometry_source, config)", source)
         self.assertIn("target.bi_export_mirror_x", source)
         self.assertIn("target.bi_export_uv_mirror_u", source)
         self.assertIn("target.bi_export_uv_flip_v", source)
+
+    def test_capture_manifest_path_is_ui_configurable(self):
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("bi_capture_manifest_path", source)
+        self.assertIn("RX_CAPTURE_MANIFEST", source)
+        self.assertIn("ui_path", source)
 
     def test_replacements_disable_v_flip_for_current_rx_scene(self):
         replacement_geometry = _replacement_geometry_literal()
@@ -38,18 +47,34 @@ class RxExportScriptContractTests(unittest.TestCase):
         self.assertFalse(eyelash["uv_mirror_u"])
         self.assertFalse(eyelash["uv_flip_v"])
 
-    def test_replacement_morph_sources_are_explicit(self):
+    def test_replacement_geometry_uses_visible_source_meshes_with_slot_adapters(self):
         replacement_geometry = _replacement_geometry_literal()
 
-        self.assertEqual(replacement_geometry["e78c7068-10590-0"]["morph_source_object"], "000_面")
-        self.assertEqual(replacement_geometry["2009f0d6-1356-0"]["morph_source_object"], "005_睫眉")
+        self.assertEqual(replacement_geometry["e78c7068-10590-0"]["geometry_object"], "000_面")
+        self.assertEqual(replacement_geometry["2009f0d6-1356-0"]["geometry_object"], "005_睫眉")
+        self.assertEqual(
+            replacement_geometry["e78c7068-10590-0"]["slot_adapter_object"],
+            "RXEXP_e78c7068-10590-0_000_面.001",
+        )
+        self.assertEqual(
+            replacement_geometry["2009f0d6-1356-0"]["slot_adapter_object"],
+            "RXEXP_2009f0d6-1356-0_005_睫眉.001",
+        )
 
-    def test_geometry_draw_part_overwrites_stale_morph_source(self):
+    def test_geometry_draw_part_defaults_morph_source_to_visible_source_mesh(self):
         source = SCRIPT_PATH.read_text(encoding="utf-8")
 
         self.assertIn('morph_source_name = str(config.get("morph_source_object", "") or "").strip()', source)
+        self.assertIn("else geometry_source", source)
         self.assertIn("target.bi_morph_source_object = morph_source_object", source)
         self.assertNotIn('if getattr(target, "bi_morph_source_object", None) is None:', source)
+
+    def test_geometry_manifest_is_rewritten_to_visible_source_identity(self):
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("def _rewrite_geometry_manifest_to_visible_sources", source)
+        self.assertIn("_rewrite_geometry_manifest_to_visible_sources(bmc_manifest, exported_targets)", source)
+        self.assertIn("record[\"object_names\"] = [exported[\"geometry_source\"].name]", source)
 
 
 if __name__ == "__main__":

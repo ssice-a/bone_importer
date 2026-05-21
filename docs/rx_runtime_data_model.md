@@ -1,6 +1,6 @@
 # RX Runtime Data Model
 
-This document records the RX v2 target data structure. Bone Importer exports animation data, not replacement meshes. The runtime model is intentionally single-path:
+This document records the RX v2 target data structure. Bone Importer exports RX-local geometry buffers when requested, plus animation payloads. The runtime model is intentionally single-path:
 
 ```text
 Bone animation = one DrawPart-local Bone Payload per IB/injected draw
@@ -12,7 +12,7 @@ No global bone-pool compatibility path is part of RX v2.
 
 ## Design Goals
 
-- Bone Importer exports Bone Payload and Morph Payload data, not model buffers, textures, or materials.
+- Bone Importer exports RX-local geometry buffers when requested, plus Bone Payload and Morph Payload data. It still does not own textures, materials, LOD chains, or full mod packaging.
 - An Animation Bank owns one shared playback state.
 - An Animation Bank may contain multiple Clips.
 - A DrawPart owns runtime targeting: `hash`, `match_index_count`, `first_index`, CB1 profile, route type, and its local Bone Payload.
@@ -106,6 +106,28 @@ explicit UV adapter:           U = 1 - U, V flipped
 ```
 
 Do not infer U mirroring from `bi_export_mirror_x` or importer metadata. UV export is only a Blender-UV to game-UV adapter. Imported game meshes were already converted once to display correctly in Blender, so export applies the inverse adapter. External authored meshes also start from Blender-correct UVs and use the same game-format adapter.
+
+Explicit Bone Importer export properties are the source of truth for a new
+export:
+
+```text
+bi_export_uv_flip_v    wins over bmc_uv_flip_v
+bi_export_uv_mirror_u  wins over bmc_uv_mirror_u
+bi_export_mirror_x     wins over bmc_mirror_flip
+```
+
+Importer metadata is only fallback data for old scenes. The exporter must not
+let stale helper flags override the values selected for the current RX package.
+
+## Capture Manifest Dependency
+
+RX Geometry Export depends on a user-provided `capture_manifest.json` for the game vertex layout table:
+
+```text
+Scene.bi_capture_manifest_path -> capture_manifest.json -> vertex_layout_table
+```
+
+This dependency is intentional. The manifest tells the exporter which VB slots, strides, semantics, and DXGI formats the target DrawPart expects. The path must be explicit UI configuration or an explicit automation override; it should not be inferred from hidden external-plugin state.
 
 Slot ids are governed by the Slot Contract:
 
@@ -494,11 +516,11 @@ The UI must not know how many DrawParts, Bone Payloads, or Morph Payloads exist.
 
 ## Not In Scope
 
-- exporting replacement meshes, IBs, VBs, textures, or materials
 - automatic base VB inference from TheHerta INI
 - global bone pool
 - using Blender mesh object names as runtime identity except through DrawPart parsing
 - duplicating playback state inside Bone Payload or Morph Payload files
+- exporting textures, materials, LOD chains, or complete mod packaging
 
 ## Migration Plan
 
