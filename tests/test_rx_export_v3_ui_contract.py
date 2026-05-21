@@ -12,6 +12,7 @@ INIT_SOURCE = (REPO_ROOT / "__init__.py").read_text(encoding="utf-8")
 class RXExportV3UIContractTests(unittest.TestCase):
     def test_scene_level_v3_export_controls_are_registered(self):
         for property_name in (
+            "bi_ui_language",
             "bi_rx_export_type",
             "bi_rx_export_geometry",
             "bi_rx_source_fps",
@@ -24,6 +25,7 @@ class RXExportV3UIContractTests(unittest.TestCase):
 
     def test_main_panel_uses_single_v3_export_flow(self):
         for property_name in (
+            "bi_ui_language",
             "bi_rx_export_type",
             "bi_rx_export_geometry",
             "bi_rx_source_fps",
@@ -32,6 +34,7 @@ class RXExportV3UIContractTests(unittest.TestCase):
         ):
             self.assertIn(property_name, PANEL_SOURCE)
 
+        self.assertIn('operator("object.bi_create_rx_export_collection"', PANEL_SOURCE)
         self.assertIn('operator("object.bi_export_rx_package"', PANEL_SOURCE)
         self.assertNotIn('operator("object.bi_export_animation"', PANEL_SOURCE)
         self.assertNotIn('operator("object.bi_export_morph"', PANEL_SOURCE)
@@ -40,9 +43,15 @@ class RXExportV3UIContractTests(unittest.TestCase):
         self.assertNotIn("Export Morph Payload", PANEL_SOURCE)
 
     def test_single_v3_export_operator_is_registered(self):
+        self.assertIn("class BI_OT_create_rx_export_collection", OPERATORS_SOURCE)
+        self.assertIn("bl_idname = \"object.bi_create_rx_export_collection\"", OPERATORS_SOURCE)
+        self.assertIn("operators.BI_OT_create_rx_export_collection", INIT_SOURCE)
         self.assertIn("class BI_OT_export_rx_package", OPERATORS_SOURCE)
         self.assertIn("bl_idname = \"object.bi_export_rx_package\"", OPERATORS_SOURCE)
         self.assertIn("operators.BI_OT_export_rx_package", INIT_SOURCE)
+
+    def test_panel_uses_dedicated_translation_module(self):
+        self.assertIn("from .core.i18n import tr", PANEL_SOURCE)
 
     def test_object_route_properties_are_registered(self):
         for property_name in (

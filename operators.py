@@ -4,7 +4,13 @@ import bpy
 
 from .core.draw_part import draw_parts_from_export_collection
 from .core.context import find_proxy_armature_for_object, list_selected_proxy_armatures
+from .core.manifest import load_export_manifest
 from .core.runtime_ini import write_runtime_ini_from_manifest
+from .core.rx_collection_setup import (
+    DEFAULT_RX_EXPORT_COLLECTION,
+    apply_collection_setup_plan,
+    build_collection_setup_plan,
+)
 from .core.workflow import (
     clear_previous_palette_for_active_proxy,
     dump_debug_for_active_proxy,
@@ -224,6 +230,51 @@ class BI_OT_export_palette(bpy.types.Operator):
         self.report({"INFO"}, message)
         if result.failed_armatures:
             self.report({"WARNING"}, "; ".join(result.failed_armatures))
+        return {"FINISHED"}
+
+
+class BI_OT_create_rx_export_collection(bpy.types.Operator):
+    """Create or sync the RX v3 collection tree from the current runtime manifest."""
+
+    bl_idname = "object.bi_create_rx_export_collection"
+    bl_label = "Create/Sync RX Collections"
+    bl_description = "Create the RX Export Collection, IB child collections, and part00 collections from rx_export_manifest.json"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(context, "scene", None))
+
+    def execute(self, context):
+        scene = context.scene
+        try:
+            manifest = load_export_manifest(scene.bi_animation_output_dir)
+            root_name = (
+                getattr(getattr(scene, "bi_export_collection", None), "name", "")
+                or DEFAULT_RX_EXPORT_COLLECTION
+            )
+            plan = build_collection_setup_plan(manifest, root_collection_name=root_name)
+            if not plan.draw_parts:
+                self.report({"ERROR"}, "rx_export_manifest.json has no draw_parts to create collections from")
+                return {"CANCELLED"}
+            result = apply_collection_setup_plan(context, plan)
+            scene.bi_export_collection = bpy.data.collections[result.root_collection_name]
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, f"Create RX collections failed: {exc}")
+            return {"CANCELLED"}
+
+        message = (
+            f"Synced {result.draw_part_count} IB collection(s), "
+            f"linked {result.linked_object_count} object(s)"
+        )
+        self.report({"INFO"}, message)
+        if result.missing_objects:
+            self.report({"WARNING"}, "Missing scene object(s): " + ", ".join(result.missing_objects[:8]))
+        if result.warnings:
+            self.report({"WARNING"}, " | ".join(result.warnings[:4]))
         return {"FINISHED"}
 
 

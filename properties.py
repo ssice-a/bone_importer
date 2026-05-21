@@ -49,6 +49,7 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_vb_layout_profile"),
     (bpy.types.Object, "bi_cb1_profile"),
     (bpy.types.Collection, "bi_cb1_override"),
+    (bpy.types.Scene, "bi_ui_language"),
     (bpy.types.Scene, "bi_output_path"),
     (bpy.types.Scene, "bi_export_collection"),
     (bpy.types.Scene, "bi_capture_manifest_path"),
@@ -349,6 +350,15 @@ def register_addon_properties():
         ),
     )
 
+    bpy.types.Scene.bi_ui_language = bpy.props.EnumProperty(
+        name="UI Language",
+        items=[
+            ("ZH", "中文", "Use Chinese labels in the Bone Importer panel"),
+            ("EN", "English", "Use English labels in the Bone Importer panel"),
+        ],
+        default="ZH",
+        description="Language used by Bone Importer panel labels.",
+    )
     bpy.types.Scene.bi_output_path = bpy.props.StringProperty(
         name="Output Path",
         default="//vst0_palette.bin",
@@ -431,10 +441,10 @@ def register_addon_properties():
     bpy.types.Scene.bi_rx_export_type = bpy.props.EnumProperty(
         name="Export Type",
         items=[
-            ("FULL", "Full RX Package", "Export bone/morph payloads, optional geometry, manifest, INI, and HLSL"),
-            ("BONE", "Bone Payload Only", "Update bone animation buffers and related manifest entries"),
-            ("MORPH", "Morph Payload Only", "Update morph buffers and related manifest entries"),
-            ("INI", "INI Only", "Regenerate executable INI/HLSL from the existing Runtime Manifest"),
+            ("FULL", "Full RX Package / 完整 RX 包", "Export bone/morph payloads, optional geometry, manifest, INI, and HLSL"),
+            ("BONE", "Bone Payload Only / 仅骨骼数据", "Update bone animation buffers and related manifest entries"),
+            ("MORPH", "Morph Payload Only / 仅形态键数据", "Update morph buffers and related manifest entries"),
+            ("INI", "INI Only / 仅 INI", "Regenerate executable INI/HLSL from the existing Runtime Manifest"),
         ],
         default="FULL",
         description="Single RX v3 export entry. The dropdown chooses what this run refreshes.",
