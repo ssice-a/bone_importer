@@ -10,10 +10,11 @@ from .draw_part import DEFAULT_MATCH_PRIORITY
 from .manifest import load_export_manifest
 
 
-# XXMI currently rejects copying a compute-written RWStructuredBuffer into a
-# vertex Buffer (d3d11_log reports 0x80070057). Keep runtime morph off until
-# we switch to a proven typed RWBuffer path or VS-side morph application.
-ENABLE_RUNTIME_MORPH_VERTEX_BINDING = False
+# XXMI rejects copying a compute-written RWStructuredBuffer into a fresh vertex
+# Buffer (d3d11_log reports 0x80070057). Match TheHerta's working pattern
+# instead: copy the immutable base VB into a UAV and ref the live VB resource to
+# that UAV result.
+ENABLE_RUNTIME_MORPH_REF_BINDING = True
 
 
 def _line(lines: list[str], value: str = ""):
@@ -227,11 +228,16 @@ def _append_bone_resources(lines: list[str], draw_key: str, payload: dict, outpu
 
 def _append_morph_resources(lines: list[str], draw_key: str, payload: dict, output_directory: str):
     key = _resource_key(draw_key)
-    base_resource = payload.get("base_position_resource_name", "") or f"ResourceBasePosition_{key}"
     if payload.get("base_position_path"):
-        _line(lines, f"[{base_resource}]")
+        stride = int(payload.get("base_position_stride", 16) or 16)
+        _line(lines, f"[ResourceMorphBaseVB_{key}]")
+        _line(lines, "type = Buffer")
+        _line(lines, f"stride = {stride}")
+        _line(lines, f"filename = {_ini_filename(payload.get('base_position_path', ''), output_directory)}")
+        _line(lines)
+        _line(lines, f"[ResourceMorphBaseVB_{key}_SRV]")
         _line(lines, "type = StructuredBuffer")
-        _line(lines, f"stride = {int(payload.get('base_position_stride', 16) or 16)}")
+        _line(lines, f"stride = {stride}")
         _line(lines, f"filename = {_ini_filename(payload.get('base_position_path', ''), output_directory)}")
         _line(lines)
     _line(lines, f"[ResourceMorphStatic_{key}]")
@@ -244,19 +250,6 @@ def _append_morph_resources(lines: list[str], draw_key: str, payload: dict, outp
     _line(lines, "stride = 16")
     _line(lines, f"filename = {_ini_filename(payload.get('anim', ''), output_directory)}")
     _line(lines)
-    vertex_count = int(payload.get("vertex_count", 0) or 0)
-    stride = int(payload.get("base_position_stride", 16) or 16)
-    _line(lines, f"[ResourceMorphRuntimeVB_{key}_UAV]")
-    _line(lines, "type = RWStructuredBuffer")
-    _line(lines, f"stride = {stride}")
-    _line(lines, f"array = {vertex_count}")
-    _line(lines)
-    _line(lines, f"[ResourceMorphRuntimeVB_{key}]")
-    _line(lines, "type = Buffer")
-    _line(lines, f"stride = {stride}")
-    _line(lines, f"array = {vertex_count}")
-    _line(lines)
-
 
 def _append_geometry_resources(lines: list[str], draw_key: str, records: list[dict], output_directory: str):
     for record in records:
@@ -324,21 +317,30 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
     _line(lines, f"match_priority = {match_priority}")
     if geometry_record is not None:
         _line(lines, "handling = skip")
-    use_runtime_morph = morph_payload is not None and ENABLE_RUNTIME_MORPH_VERTEX_BINDING
+    use_runtime_morph = (
+        morph_payload is not None
+        and ENABLE_RUNTIME_MORPH_REF_BINDING
+        and geometry_record is not None
+        and "vb0" in geometry_vertex_buffers
+    )
     if use_runtime_morph:
         shader = "CustomShader_ApplyMorph_PNTA40" if str(morph_payload.get("base_position_layout", "")).endswith("PNTA40") else "CustomShader_ApplyMorph"
-        base_resource = (
-            f"ResourceGeometry_{geometry_suffix}_vb0_SRV"
-            if geometry_record is not None and geometry_vertex_buffers.get("vb0")
-            else (morph_payload.get("base_position_resource_name", "") or f"ResourceBasePosition_{key}")
-        )
-        _line(lines, f"cs-t0 = {base_resource}")
+        base_srv_resource = f"ResourceMorphBaseVB_{key}_SRV" if morph_payload.get("base_position_path") else f"ResourceGeometry_{geometry_suffix}_vb0_SRV"
+        base_copy_resource = f"ResourceMorphBaseVB_{key}" if morph_payload.get("base_position_path") else f"ResourceGeometry_{geometry_suffix}_vb0"
+        live_position_resource = f"ResourceGeometry_{geometry_suffix}_vb0"
+        _line(lines, f"cs-t0 = {base_srv_resource}")
         _line(lines, f"cs-t1 = ResourceMorphStatic_{key}")
         _line(lines, f"cs-t2 = ResourceMorphAnim_{key}")
-        _line(lines, f"cs-u0 = ResourceMorphRuntimeVB_{key}_UAV")
+        _line(lines, "cs-t3 = ResourceMasterPlayback_SRV")
+        _line(lines, f"cs-u0 = copy {base_copy_resource}")
+        _line(lines, f"{live_position_resource} = ref cs-u0")
         _line(lines, f"dispatch = {(int(morph_payload.get('vertex_count', 0) or 0) + 63) // 64}, 1, 1")
         _line(lines, f"run = {shader}")
-        _line(lines, f"ResourceMorphRuntimeVB_{key} = copy ResourceMorphRuntimeVB_{key}_UAV")
+        _line(lines, "cs-u0 = null")
+        _line(lines, "cs-t0 = null")
+        _line(lines, "cs-t1 = null")
+        _line(lines, "cs-t2 = null")
+        _line(lines, "cs-t3 = null")
     if bone_payload is not None:
         _line(lines, "run = CustomShader_ExtractCB1")
         _line(lines, f"cs-t0 = ResourceBoneAnim_{key}")
@@ -362,21 +364,12 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, f"ib = ref ResourceGeometryIndex_{geometry_suffix}")
         for slot_name, _vertex_buffer in sorted(geometry_vertex_buffers.items(), key=lambda item: item[0]):
             slot = str(slot_name or "").lower()
-            if slot == "vb0" and use_runtime_morph:
-                _line(lines, f"vb0 = ref ResourceMorphRuntimeVB_{key}")
-            else:
-                _line(lines, f"{slot} = ref ResourceGeometry_{geometry_suffix}_{slot}")
+            _line(lines, f"{slot} = ref ResourceGeometry_{geometry_suffix}_{slot}")
         if "vb0" in geometry_vertex_buffers and "vb3" not in geometry_vertex_buffers:
-            if use_runtime_morph:
-                _line(lines, f"vb3 = ref ResourceMorphRuntimeVB_{key}")
-            else:
-                _line(lines, f"vb3 = ref ResourceGeometry_{geometry_suffix}_vb0")
+            _line(lines, f"vb3 = ref ResourceGeometry_{geometry_suffix}_vb0")
         index_buffer = dict(geometry_record.get("index_buffer", {}) or {})
         index_count = int(index_buffer.get("index_count", geometry_record.get("index_count", 0)) or 0)
         _line(lines, f"drawindexedinstanced = {index_count},INSTANCE_COUNT,0,0,FIRST_INSTANCE")
-    elif use_runtime_morph:
-        _line(lines, f"vb0 = ref ResourceMorphRuntimeVB_{key}")
-        _line(lines, f"vb3 = ref ResourceMorphRuntimeVB_{key}")
     _line(lines)
 
 
