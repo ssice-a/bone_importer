@@ -8,7 +8,7 @@
 | Output Dir / 输出目录 | Folder containing RX buffers, manifest, generated ini, and hlsl. / RX 缓冲、清单、ini 和 hlsl 的输出目录。 |
 | Capture Manifest / 捕获清单 | External geometry layout source used when geometry export is enabled. / 导出几何时读取的游戏顶点布局清单。 |
 | RX Export Collection / RX 导出集合 | Root collection whose child collections are IB regions. / 承载导出内容的根集合，子集合对应 IB。 |
-| Create/Sync RX Collections / 创建/同步 RX 集合 | Creates the root collection, IB child collections, and `part00` collections from `rx_export_manifest.json`, then links found scene objects. / 根据 `rx_export_manifest.json` 创建根集合、IB 子集合和 `part00`，并链接场景内能找到的物体。 |
+| Create/Sync RX Collections / 创建/同步 RX 集合 | Creates the root collection and IB child collections from `rx_export_manifest.json`, then links found scene objects directly under each IB collection as implicit `part00`. / 根据 `rx_export_manifest.json` 创建根集合和 IB 子集合，并把场景内能找到的物体直接链接到 IB 集合下，作为隐式 `part00`。 |
 | Export Type / 导出类型 | Chooses whether this run exports full package, bone-only, morph-only, or ini-only. / 选择本次导出完整包、仅骨骼、仅形态键或仅 ini。 |
 | Export Geometry / 导出几何 | Enables geometry refresh when the selected export type can produce geometry. / 在导出类型允许时刷新几何数据。 |
 

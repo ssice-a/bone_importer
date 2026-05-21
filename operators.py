@@ -238,7 +238,7 @@ class BI_OT_create_rx_export_collection(bpy.types.Operator):
 
     bl_idname = "object.bi_create_rx_export_collection"
     bl_label = "Create/Sync RX Collections"
-    bl_description = "Create the RX Export Collection, IB child collections, and part00 collections from rx_export_manifest.json"
+    bl_description = "Create the RX Export Collection and IB child collections from rx_export_manifest.json"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod

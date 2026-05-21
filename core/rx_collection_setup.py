@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 
 
 DEFAULT_RX_EXPORT_COLLECTION = "RX Export Collection"
-DEFAULT_PART_COLLECTION = "part00"
 _PART_RE = re.compile(r"^part(?P<index>\d+)(?:\D.*)?$", re.IGNORECASE)
 
 
@@ -33,7 +32,6 @@ class RXObjectSetup:
 class RXDrawPartSetup:
     draw_key: str
     collection_name: str
-    part_collection_name: str = DEFAULT_PART_COLLECTION
     objects: tuple[RXObjectSetup, ...] = ()
     has_geometry: bool = False
     has_morph: bool = False
@@ -52,7 +50,7 @@ class RXCollectionSetupPlan:
 class RXCollectionSetupResult:
     root_collection_name: str
     draw_part_count: int
-    part_collection_count: int
+    explicit_part_collection_count: int
     linked_object_count: int
     missing_objects: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -156,8 +154,9 @@ def _append_unique(values: list[str], value: str):
 def apply_collection_setup_plan(context, plan: RXCollectionSetupPlan) -> RXCollectionSetupResult:
     """Apply a setup plan to the active Blender scene.
 
-    Objects are linked into ``part00`` collections when they already exist in
-    the scene. Missing objects are reported, never created as fake meshes.
+    Objects are linked directly into each IB collection. Direct meshes are
+    interpreted by the export planner as the implicit part00. Missing objects
+    are reported, never created as fake meshes.
     """
 
     import bpy
@@ -173,41 +172,36 @@ def apply_collection_setup_plan(context, plan: RXCollectionSetupPlan) -> RXColle
 
     for draw_part in plan.draw_parts:
         draw_collection = _ensure_child_collection(root_collection, draw_part.collection_name, reuse_global=True)
-        _unlink_existing_part_collections(draw_collection, draw_part.part_collection_name)
-        part_collection = _ensure_child_collection(draw_collection, draw_part.part_collection_name, require_unique=True)
+        _unlink_existing_part_collections(draw_collection)
         _unlink_direct_meshes(draw_collection)
-        _unlink_direct_meshes(part_collection)
 
         for object_setup in draw_part.objects:
             obj = _find_object(bpy, object_setup.object_name)
             if obj is None:
                 missing_objects.append(object_setup.object_name)
                 continue
-            _link_object(part_collection, obj)
+            _link_object(draw_collection, obj)
             _apply_object_setup(obj, object_setup)
             linked_object_count += 1
 
     return RXCollectionSetupResult(
         root_collection_name=root_collection.name,
         draw_part_count=len(plan.draw_parts),
-        part_collection_count=len(plan.draw_parts),
+        explicit_part_collection_count=0,
         linked_object_count=linked_object_count,
         missing_objects=tuple(missing_objects),
         warnings=tuple(warnings),
     )
 
 
-def _ensure_child_collection(parent_collection, child_name: str, *, reuse_global: bool = False, require_unique: bool = False):
+def _ensure_child_collection(parent_collection, child_name: str, *, reuse_global: bool = False):
     import bpy
 
     existing_child = getattr(parent_collection.children, "get", lambda _name: None)(child_name)
     if existing_child is not None:
-        if require_unique and int(getattr(existing_child, "users", 1) or 1) > 1:
-            parent_collection.children.unlink(existing_child)
-        else:
-            return existing_child
+        return existing_child
     collection = None
-    if reuse_global and not require_unique:
+    if reuse_global:
         collection = bpy.data.collections.get(child_name)
     if collection is None:
         collection = bpy.data.collections.new(child_name)
@@ -230,12 +224,11 @@ def _unlink_direct_meshes(collection):
             collection.objects.unlink(obj)
 
 
-def _unlink_existing_part_collections(collection, part_collection_name: str):
-    target_index = _parse_part_index(part_collection_name)
-    if target_index is None:
-        return
+def _unlink_existing_part_collections(collection):
+    """Remove old auto-created partNN children so sync falls back to implicit part00."""
+
     for child in tuple(collection.children):
-        if _parse_part_index(getattr(child, "name", "")) == target_index:
+        if _parse_part_index(getattr(child, "name", "")) is not None:
             collection.children.unlink(child)
 
 

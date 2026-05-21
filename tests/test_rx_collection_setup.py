@@ -20,7 +20,7 @@ rx_collection_setup = _load_module()
 
 
 class RXCollectionSetupTests(unittest.TestCase):
-    def test_manifest_draw_parts_create_sorted_ib_part00_plan(self):
+    def test_manifest_draw_parts_create_sorted_implicit_part_plan(self):
         manifest = {
             "draw_parts": {
                 "small_96_0": {
@@ -48,7 +48,7 @@ class RXCollectionSetupTests(unittest.TestCase):
 
         self.assertEqual("RX Export Collection", plan.root_collection_name)
         self.assertEqual(["1377f2c3-59679-0", "58870754-96-0"], [part.collection_name for part in plan.draw_parts])
-        self.assertTrue(all(part.part_collection_name == "part00" for part in plan.draw_parts))
+        self.assertFalse(hasattr(plan.draw_parts[0], "part_collection_name"))
         self.assertEqual("1377f2c3-59679-0", plan.draw_parts[0].objects[0].object_name)
         self.assertTrue(plan.draw_parts[0].has_bone)
 
