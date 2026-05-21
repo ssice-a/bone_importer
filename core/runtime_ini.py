@@ -174,14 +174,15 @@ def _append_global_resources(lines: list[str], manifest: dict, clip_name: str, o
     _line(lines, "cs-t2 = null")
     _line(lines, "cs-t3 = null")
     _line(lines)
-    _line(lines, "[CustomShader_ApplyMorph]")
-    _line(lines, "cs = hlsl\\apply_morph_to_vb_cs.hlsl")
-    _line(lines, "cs-t3 = ResourceMasterPlayback_SRV")
-    _line(lines)
-    _line(lines, "[CustomShader_ApplyMorph_PNTA40]")
-    _line(lines, "cs = hlsl\\apply_morph_to_vb_pnta40_cs.hlsl")
-    _line(lines, "cs-t3 = ResourceMasterPlayback_SRV")
-    _line(lines)
+    if ENABLE_RUNTIME_MORPH_VERTEX_BINDING:
+        _line(lines, "[CustomShader_ApplyMorph]")
+        _line(lines, "cs = hlsl\\apply_morph_to_vb_cs.hlsl")
+        _line(lines, "cs-t3 = ResourceMasterPlayback_SRV")
+        _line(lines)
+        _line(lines, "[CustomShader_ApplyMorph_PNTA40]")
+        _line(lines, "cs = hlsl\\apply_morph_to_vb_pnta40_cs.hlsl")
+        _line(lines, "cs-t3 = ResourceMasterPlayback_SRV")
+        _line(lines)
 
 
 def _append_bone_resources(lines: list[str], draw_key: str, payload: dict, output_directory: str):

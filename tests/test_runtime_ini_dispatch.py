@@ -194,6 +194,8 @@ class RuntimeIniDispatchTests(unittest.TestCase):
 
         self.assertNotIn("ResourceMorphRuntimeVB_e78c7068_10590_0 = copy ResourceMorphRuntimeVB_e78c7068_10590_0_UAV", ini)
         self.assertNotIn("ResourceMorphRuntimeVB_2009f0d6_1356_0 = copy ResourceMorphRuntimeVB_2009f0d6_1356_0_UAV", ini)
+        self.assertNotIn("[CustomShader_ApplyMorph]", ini)
+        self.assertNotIn("[CustomShader_ApplyMorph_PNTA40]", ini)
         self.assertNotIn("run = CustomShader_ApplyMorph\n", ini)
         self.assertNotIn("run = CustomShader_ApplyMorph_PNTA40\n", ini)
         self.assertNotIn("vb0 = ref ResourceMorphRuntimeVB_e78c7068_10590_0", ini)
