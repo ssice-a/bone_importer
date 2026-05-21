@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
 DEFAULT_RX_EXPORT_COLLECTION = "RX Export Collection"
 DEFAULT_PART_COLLECTION = "part00"
+_PART_RE = re.compile(r"^part(?P<index>\d+)(?:\D.*)?$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -164,15 +166,17 @@ def apply_collection_setup_plan(context, plan: RXCollectionSetupPlan) -> RXColle
     if scene is None:
         raise ValueError("No active Blender scene")
 
-    root_collection = _ensure_child_collection(scene.collection, plan.root_collection_name)
+    root_collection = _ensure_child_collection(scene.collection, plan.root_collection_name, reuse_global=True)
     linked_object_count = 0
     missing_objects: list[str] = []
     warnings: list[str] = list(plan.warnings)
 
     for draw_part in plan.draw_parts:
-        draw_collection = _ensure_child_collection(root_collection, draw_part.collection_name)
-        part_collection = _ensure_child_collection(draw_collection, draw_part.part_collection_name)
+        draw_collection = _ensure_child_collection(root_collection, draw_part.collection_name, reuse_global=True)
+        _unlink_existing_part_collections(draw_collection, draw_part.part_collection_name)
+        part_collection = _ensure_child_collection(draw_collection, draw_part.part_collection_name, require_unique=True)
         _unlink_direct_meshes(draw_collection)
+        _unlink_direct_meshes(part_collection)
 
         for object_setup in draw_part.objects:
             obj = _find_object(bpy, object_setup.object_name)
@@ -193,13 +197,20 @@ def apply_collection_setup_plan(context, plan: RXCollectionSetupPlan) -> RXColle
     )
 
 
-def _ensure_child_collection(parent_collection, child_name: str):
+def _ensure_child_collection(parent_collection, child_name: str, *, reuse_global: bool = False, require_unique: bool = False):
     import bpy
 
     existing_child = getattr(parent_collection.children, "get", lambda _name: None)(child_name)
     if existing_child is not None:
-        return existing_child
-    collection = bpy.data.collections.get(child_name) or bpy.data.collections.new(child_name)
+        if require_unique and int(getattr(existing_child, "users", 1) or 1) > 1:
+            parent_collection.children.unlink(existing_child)
+        else:
+            return existing_child
+    collection = None
+    if reuse_global and not require_unique:
+        collection = bpy.data.collections.get(child_name)
+    if collection is None:
+        collection = bpy.data.collections.new(child_name)
     try:
         parent_collection.children.link(collection)
     except RuntimeError:
@@ -208,7 +219,7 @@ def _ensure_child_collection(parent_collection, child_name: str):
 
 
 def _link_object(collection, obj):
-    if obj.name in collection.objects:
+    if getattr(collection.objects, "get", lambda _name: None)(obj.name) is not None:
         return
     collection.objects.link(obj)
 
@@ -217,6 +228,22 @@ def _unlink_direct_meshes(collection):
     for obj in tuple(collection.objects):
         if str(getattr(obj, "type", "") or "") == "MESH":
             collection.objects.unlink(obj)
+
+
+def _unlink_existing_part_collections(collection, part_collection_name: str):
+    target_index = _parse_part_index(part_collection_name)
+    if target_index is None:
+        return
+    for child in tuple(collection.children):
+        if _parse_part_index(getattr(child, "name", "")) == target_index:
+            collection.children.unlink(child)
+
+
+def _parse_part_index(collection_name: str) -> int | None:
+    match = _PART_RE.match(str(collection_name or "").strip())
+    if match is None:
+        return None
+    return int(match.group("index"))
 
 
 def _find_object(bpy_module, object_name: str):
