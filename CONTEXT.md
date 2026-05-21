@@ -1,6 +1,6 @@
 # Bone Importer Context
 
-Bone Importer exports runtime animation data for EFMI/3DMigoto mods. It does not own replacement mesh export; it connects Blender-evaluated animation data to runtime draw targets.
+Bone Importer exports RX runtime packages for EFMI/3DMigoto mods: replacement geometry buffers when requested, Blender-evaluated Bone Payload data, Morph Payload data, and generated runtime INI/HLSL. External tools or frame analysis still provide game capture metadata such as vertex layouts.
 
 ## Language
 
@@ -38,6 +38,26 @@ UV mirroring belongs to this contract too. U mirroring is explicit metadata for 
 The DrawPart-local runtime slot namespace that decides which source bone writes each game palette slot. Runtime slot ids always keep their numeric meaning; BMC-imported mirror metadata is handled by the Runtime Coordinate Contract, not by automatic source-bone matching. Explicit Bone Slot Map entries are the only supported way to make a non-identity source binding.
 _Avoid_: global slot namespace, hidden cross-DrawPart slot sharing
 
+**IB Collection**:
+The Blender collection named `<hash>-<match_index_count>-<first_index>` that carries one runtime DrawPart context. Mesh objects placed directly inside it form implicit `part00`; explicit `partNN` children create separate part buffer sets.
+_Avoid_: source folder, attach folder, object-name routing
+
+**Draw Segment**:
+One runtime `drawindexed` range inside an exported part. A mesh object normally becomes one Draw Segment; segments in the same part share the merged VB/IB but may bind different final palettes.
+_Avoid_: separate object buffer, global part id
+
+**Before Stage**:
+The update/compute portion of the target TextureOverride. It updates every palette and runs every morph/pre-skin CS needed by the IB Collection before any replacement Draw Segment is issued or the original draw is kept.
+_Avoid_: source-only route, object identity classifier
+
+**After Stage**:
+A legacy/internal timing label for late replacement draw emission. RX Export v3 user-facing design should prefer Draw Segment and IB Collection terminology instead of asking users to classify objects as After.
+_Avoid_: attach route, external object classifier
+
+**Pre-Skin Deformer**:
+A Before Stage compute route that writes a runtime vertex buffer before final skinning and Draw Segment emission. Morph and bone pre-skin both write into the exported DrawVB chain.
+_Avoid_: implicit morph-before-bone behavior, ad-hoc pre-skin compute passes
+
 **Runtime Manifest**:
 The persistent relationship map between an Animation Bank, its Clips, DrawParts, DrawPart-local Bone Payloads, and DrawPart-local Morph Payloads.
 _Avoid_: generated ini, clip manifest
@@ -47,8 +67,12 @@ An animation route that only replaces runtime bone data for an existing GPU-skin
 _Avoid_: model animation
 
 **Replacement Skinned Model**:
-An animation route where an externally exported replacement model uses Bone Payload data, and optionally Morph Payload data, at runtime.
+An animation route where replacement geometry buffers use Bone Payload data, and optionally Morph Payload data, at runtime. Bone Importer may export the RX-local IB/VB buffers, but it does not own materials, textures, LOD chains, or full mod packaging.
 _Avoid_: CPU skinning export
+
+**Capture Manifest**:
+The user-supplied `capture_manifest.json` that provides the game vertex layout table used by RX Geometry Export. It is a required dependency for writing game-compatible VB/IB buffers, and its path should be explicit UI configuration.
+_Avoid_: hidden hardcoded layout path, implicit external-plugin state
 
 **Morph-Only Animation**:
 An animation route that only applies Morph Payload data to a target vertex buffer while sharing the Clip timeline.
@@ -64,8 +88,13 @@ _Avoid_: shape-key mesh export
 - A **Runtime Manifest** records many **DrawParts** under one **Animation Bank**.
 - A **Runtime Coordinate Contract** must be shared by every runtime payload and any replacement geometry bound to the same **DrawPart**.
 - A **Slot Contract** is separate from the **Runtime Coordinate Contract**: geometry mirror changes vector values and final skin rows, while slot ids remain semantic ids.
-- A **Replacement Skinned Model** is exported by an external model tool, not by Bone Importer.
+- A **Replacement Skinned Model** may be exported through Bone Importer's RX Geometry Export, using a user-supplied **Capture Manifest** for game layout semantics.
 - A **Morph Payload** may coexist with a **DrawPart Bone Pool**, but does not depend on one.
+- An **IB Collection** owns one runtime **DrawPart** context.
+- An **IB Collection** may export zero or more **Draw Segments**.
+- If an **IB Collection** exports any geometry, the original game draw for that **DrawPart** is skipped.
+- A **Draw Segment** consumes the final DrawVB/DrawIB range and whichever final palette its vertex weights target.
+- A **Pre-Skin Deformer** always runs in the **Before Stage** and prepares DrawVB ranges for later **Draw Segments**.
 
 ## Example Dialogue
 
@@ -77,3 +106,4 @@ _Avoid_: shape-key mesh export
 - "part" previously meant both global palette slice and draw target. Resolved: use **DrawPart** for the draw target, and avoid global slice terminology in the new design.
 - "mesh key" previously identified both Blender source objects and runtime resources. Resolved: use **DrawPart** for runtime identity and explicit source objects for Blender authoring inputs.
 - A global bone pool was considered and rejected for RX v2. The decisive reason is slot semantics: external models, replacement models, and native game models may all use different local slot meanings, so one IB should own one Bone Payload. Multi-Clip switching is handled by giving every DrawPart-local Bone Payload the same `active_clip_index`.
+- Before/After previously meant "bone-only before" and "draw-only after". Resolved for RX Export v3: user-facing routing is no longer Before/After. Use **IB Collection**, **partNN**, and **Draw Segment**. The Before Stage is only the update/compute phase.

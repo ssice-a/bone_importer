@@ -80,6 +80,16 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         binding_box = workflow_box.box()
         binding_box.label(text="Active DrawPart Plan", icon="LINKED")
         if active_object is not None and active_object.type == "MESH":
+            route_box = binding_box.box()
+            route_box.label(text="RX v3 Mesh Route", icon="MOD_ARMATURE")
+            route_box.prop(active_object, "bi_final_skin")
+            route_box.prop(active_object, "bi_final_armature")
+            route_box.prop(active_object, "bi_force_replace_geometry")
+            route_box.prop(active_object, "bi_preskin_bone_enabled")
+            preskin_route = route_box.column(align=True)
+            preskin_route.enabled = bool(getattr(active_object, "bi_preskin_bone_enabled", False))
+            preskin_route.prop(active_object, "bi_preskin_armature")
+            preskin_route.prop(active_object, "bi_preskin_action")
             try:
                 draw_payload = parse_draw_part_name(active_object.name)
             except ValueError:
@@ -124,6 +134,7 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
             icon="INFO",
         )
         animation_box.prop(scene, "bi_animation_output_dir")
+        animation_box.prop(scene, "bi_capture_manifest_path")
         clip_row = animation_box.row(align=True)
         clip_row.prop(scene, "bi_animation_clip_name")
         clip_row.prop(scene, "bi_animation_clip_id")

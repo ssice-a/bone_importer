@@ -38,6 +38,12 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Object, "bi_bone_source_armature"),
     (bpy.types.Object, "bi_bone_slot_map_json"),
     (bpy.types.Object, "bi_skin_contract"),
+    (bpy.types.Object, "bi_final_skin"),
+    (bpy.types.Object, "bi_final_armature"),
+    (bpy.types.Object, "bi_force_replace_geometry"),
+    (bpy.types.Object, "bi_preskin_bone_enabled"),
+    (bpy.types.Object, "bi_preskin_armature"),
+    (bpy.types.Object, "bi_preskin_action"),
     (bpy.types.Object, "bi_morph_enabled"),
     (bpy.types.Object, "bi_morph_source_object"),
     (bpy.types.Object, "bi_vb_layout_profile"),
@@ -45,6 +51,7 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Collection, "bi_cb1_override"),
     (bpy.types.Scene, "bi_output_path"),
     (bpy.types.Scene, "bi_export_collection"),
+    (bpy.types.Scene, "bi_capture_manifest_path"),
     (bpy.types.Scene, "bi_animation_output_dir"),
     (bpy.types.Scene, "bi_animation_clip_name"),
     (bpy.types.Scene, "bi_animation_clip_id"),
@@ -260,6 +267,41 @@ def register_addon_properties():
         default="TARGET_NUMERIC_GROUPS",
         description="Defines which slot namespace is the runtime truth for this DrawPart.",
     )
+    bpy.types.Object.bi_final_skin = bpy.props.EnumProperty(
+        name="Final Skin",
+        items=[
+            ("AUTO", "Auto", "Resolve from weighted vertex groups; report ambiguity instead of guessing"),
+            ("SOURCE_GAME", "Source Game", "Final draw weights map to the target game/source DrawPart slots"),
+            ("OWN", "Own", "Final draw weights map to this object's own armature palette"),
+        ],
+        default="AUTO",
+        description="RX v3 final draw skin palette mode for this mesh object.",
+    )
+    bpy.types.Object.bi_final_armature = bpy.props.PointerProperty(
+        name="Final Armature",
+        type=bpy.types.Object,
+        description="Explicit armature used for Final Skin = Own. Leave empty to infer from the mesh armature modifier.",
+    )
+    bpy.types.Object.bi_force_replace_geometry = bpy.props.BoolProperty(
+        name="Force Geometry",
+        default=False,
+        description="Force this mesh to export replacement geometry even when route analysis would otherwise keep the original draw.",
+    )
+    bpy.types.Object.bi_preskin_bone_enabled = bpy.props.BoolProperty(
+        name="Pre-Skin Bone",
+        default=False,
+        description="Run an object-level bone pre-skin compute pass before final SOURCE_GAME skinning.",
+    )
+    bpy.types.Object.bi_preskin_armature = bpy.props.PointerProperty(
+        name="Pre-Skin Armature",
+        type=bpy.types.Object,
+        description="Armature sampled by the Pre-Skin Bone compute pass.",
+    )
+    bpy.types.Object.bi_preskin_action = bpy.props.StringProperty(
+        name="Pre-Skin Action",
+        default="",
+        description="Optional action name for Pre-Skin Bone. If empty, the selected pre-skin armature's current action is used.",
+    )
     bpy.types.Object.bi_morph_enabled = bpy.props.BoolProperty(
         name="Morph Payload",
         default=False,
@@ -312,6 +354,14 @@ def register_addon_properties():
         description=(
             "Optional collection used as the export target source. Objects inside it resolve to their linked "
             "proxy armatures; configured proxy parts and resolved base Position buffers define the exported resources."
+        ),
+    )
+    bpy.types.Scene.bi_capture_manifest_path = bpy.props.StringProperty(
+        name="Capture Manifest",
+        default="",
+        subtype="FILE_PATH",
+        description=(
+            "Path to the capture_manifest.json that provides the game vertex layout table used by RX geometry export."
         ),
     )
     bpy.types.Scene.bi_animation_output_dir = bpy.props.StringProperty(
