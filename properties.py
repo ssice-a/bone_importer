@@ -62,6 +62,13 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Scene, "bi_animation_presents_per_step"),
     (bpy.types.Scene, "bi_animation_loop_start"),
     (bpy.types.Scene, "bi_animation_loop_end"),
+    (bpy.types.Scene, "bi_rx_export_type"),
+    (bpy.types.Scene, "bi_rx_export_geometry"),
+    (bpy.types.Scene, "bi_rx_source_fps"),
+    (bpy.types.Scene, "bi_rx_target_game_fps"),
+    (bpy.types.Scene, "bi_rx_playback_speed"),
+    (bpy.types.Scene, "bi_rx_preview_expanded"),
+    (bpy.types.Scene, "bi_rx_object_advanced_expanded"),
     (bpy.types.Scene, "bi_export_mirror_x"),
     (bpy.types.Scene, "bi_export_uv_mirror_u"),
     (bpy.types.Scene, "bi_export_uv_flip_v"),
@@ -420,6 +427,53 @@ def register_addon_properties():
         default=-1,
         min=-1,
         description="Preferred loop end source frame. Use -1 to default to the last exported frame.",
+    )
+    bpy.types.Scene.bi_rx_export_type = bpy.props.EnumProperty(
+        name="Export Type",
+        items=[
+            ("FULL", "Full RX Package", "Export bone/morph payloads, optional geometry, manifest, INI, and HLSL"),
+            ("BONE", "Bone Payload Only", "Update bone animation buffers and related manifest entries"),
+            ("MORPH", "Morph Payload Only", "Update morph buffers and related manifest entries"),
+            ("INI", "INI Only", "Regenerate executable INI/HLSL from the existing Runtime Manifest"),
+        ],
+        default="FULL",
+        description="Single RX v3 export entry. The dropdown chooses what this run refreshes.",
+    )
+    bpy.types.Scene.bi_rx_export_geometry = bpy.props.BoolProperty(
+        name="Export Geometry",
+        default=True,
+        description=(
+            "Export or refresh required RX geometry buffers when the selected export type can produce geometry. "
+            "Disable only when existing manifest geometry should be reused."
+        ),
+    )
+    bpy.types.Scene.bi_rx_source_fps = bpy.props.FloatProperty(
+        name="Source FPS",
+        default=0.0,
+        min=0.0,
+        description="Source animation FPS. Use 0 to follow the current Blender scene FPS.",
+    )
+    bpy.types.Scene.bi_rx_target_game_fps = bpy.props.FloatProperty(
+        name="Target Game FPS",
+        default=120.0,
+        min=1.0,
+        description="Runtime Present rate used to derive the default playback ticks for the generated INI.",
+    )
+    bpy.types.Scene.bi_rx_playback_speed = bpy.props.FloatProperty(
+        name="Playback Speed",
+        default=1.0,
+        min=0.01,
+        description="Intuitive speed multiplier. 2.0 is double speed, 0.5 is half speed.",
+    )
+    bpy.types.Scene.bi_rx_preview_expanded = bpy.props.BoolProperty(
+        name="Show IB Preview",
+        default=True,
+        description="Show the v3 collection-derived IB/part/export route preview.",
+    )
+    bpy.types.Scene.bi_rx_object_advanced_expanded = bpy.props.BoolProperty(
+        name="Show Object Advanced",
+        default=False,
+        description="Show advanced per-object route and adapter settings for the active mesh.",
     )
     bpy.types.Scene.bi_export_mirror_x = bpy.props.BoolProperty(
         name="Default Export Mirror X",

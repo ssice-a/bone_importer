@@ -1,18 +1,175 @@
-"""Bone Importer 侧边栏面板。"""
+"""Bone Importer sidebar panel."""
+
+from __future__ import annotations
 
 import bpy
-from .core.collection_plan import count_collection_meshes
-from .core.context import (
-    find_proxy_armature_for_object,
-    find_source_mesh_for_object,
-    list_directly_selected_proxy_armatures,
-    list_selected_proxy_armatures,
+
+from .core.context import find_proxy_armature_for_object, find_source_mesh_for_object
+from .core.rx_export_plan import (
+    DEFORM_MORPH,
+    DEFORM_MORPH_THEN_PRESKIN_BONE,
+    DEFORM_PRESKIN_BONE,
+    RXExportPlanError,
+    build_rx_export_plan,
 )
-from .core.draw_part import count_collection_draw_parts, draw_parts_from_selected_objects, parse_draw_part_name
+from .core.rx_mesh_analysis import analyze_mesh_route
+
+
+def _safe_scene_fps(scene) -> float:
+    configured_fps = float(getattr(scene, "bi_rx_source_fps", 0.0) or 0.0)
+    if configured_fps > 0.0:
+        return configured_fps
+    render = getattr(scene, "render", None)
+    scene_fps = float(getattr(render, "fps", 0.0) or 0.0)
+    return scene_fps if scene_fps > 0.0 else float(getattr(scene, "bi_animation_fps", 60.0) or 60.0)
+
+
+def _derived_ticks_per_sample(scene) -> int:
+    source_fps = max(_safe_scene_fps(scene), 1e-6)
+    frame_step = max(int(getattr(scene, "bi_animation_frame_step", 1) or 1), 1)
+    sample_fps = source_fps / frame_step
+    target_fps = max(float(getattr(scene, "bi_rx_target_game_fps", 120.0) or 120.0), 1.0)
+    playback_speed = max(float(getattr(scene, "bi_rx_playback_speed", 1.0) or 1.0), 0.01)
+    return max(int(round(target_fps / max(sample_fps * playback_speed, 1e-6))), 1)
+
+
+def _build_preview_plan(collection):
+    if collection is None:
+        return None, "Set an RX Export Collection."
+    try:
+        return build_rx_export_plan(collection, analyze_mesh_route), ""
+    except RXExportPlanError as exc:
+        return None, str(exc)
+    except Exception as exc:
+        return None, f"Preview failed: {exc}"
+
+
+def _plan_counts(plan) -> dict[str, int]:
+    if plan is None:
+        return {
+            "ib": 0,
+            "part": 0,
+            "segment": 0,
+            "replacement": 0,
+            "morph": 0,
+            "preskin": 0,
+            "own": 0,
+            "source": 0,
+        }
+
+    counts = {
+        "ib": len(plan.draw_parts),
+        "part": 0,
+        "segment": 0,
+        "replacement": 0,
+        "morph": 0,
+        "preskin": 0,
+        "own": 0,
+        "source": 0,
+    }
+    for draw_part in plan.draw_parts:
+        counts["part"] += len(draw_part.parts)
+        for part in draw_part.parts:
+            for segment in part.segments:
+                counts["segment"] += 1
+                counts["replacement"] += int(bool(segment.geometry_required))
+                counts["own"] += int(segment.final_skin_palette == "OWN")
+                counts["source"] += int(segment.final_skin_palette == "SOURCE_GAME")
+                counts["morph"] += int(segment.deform_chain in {DEFORM_MORPH, DEFORM_MORPH_THEN_PRESKIN_BONE})
+                counts["preskin"] += int(segment.deform_chain in {DEFORM_PRESKIN_BONE, DEFORM_MORPH_THEN_PRESKIN_BONE})
+    return counts
+
+
+def _draw_plan_preview(box, scene, plan, error_message: str):
+    header = box.row(align=True)
+    icon = "TRIA_DOWN" if bool(scene.bi_rx_preview_expanded) else "TRIA_RIGHT"
+    header.prop(scene, "bi_rx_preview_expanded", text="", icon=icon, emboss=False)
+    header.label(text="IB Preview", icon="OUTLINER_COLLECTION")
+
+    if not bool(scene.bi_rx_preview_expanded):
+        return
+
+    if error_message:
+        box.label(text=error_message, icon="ERROR")
+        box.label(text="Expected child collections: hash-index_count-firstindex, optionally with partNN children.", icon="INFO")
+        return
+
+    counts = _plan_counts(plan)
+    grid = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=False, align=True)
+    grid.label(text=f"IB Collections: {counts['ib']}", icon="EVENT_I")
+    grid.label(text=f"Parts: {counts['part']}", icon="EVENT_P")
+    grid.label(text=f"Draw Segments: {counts['segment']}", icon="MESH_DATA")
+    grid.label(text=f"Geometry Required: {counts['replacement']}", icon="MOD_BUILD")
+    grid.label(text=f"Source Skin: {counts['source']}", icon="LINKED")
+    grid.label(text=f"Own Skin: {counts['own']}", icon="ARMATURE_DATA")
+    grid.label(text=f"Morph: {counts['morph']}", icon="SHAPEKEY_DATA")
+    grid.label(text=f"Pre-Skin Bone: {counts['preskin']}", icon="MOD_ARMATURE")
+
+    shown = 0
+    for draw_part in plan.draw_parts:
+        if shown >= 8:
+            break
+        state = "skip original" if draw_part.skip_original else "keep original"
+        row = box.row(align=True)
+        row.label(text=f"{draw_part.identity.draw_key}: {state}", icon="RESTRICT_VIEW_OFF")
+        shown += 1
+    hidden = counts["ib"] - shown
+    if hidden > 0:
+        box.label(text=f"{hidden} more IB collection(s) hidden.", icon="INFO")
+
+
+def _draw_active_object_advanced(box, scene, active_object):
+    header = box.row(align=True)
+    icon = "TRIA_DOWN" if bool(scene.bi_rx_object_advanced_expanded) else "TRIA_RIGHT"
+    header.prop(scene, "bi_rx_object_advanced_expanded", text="", icon=icon, emboss=False)
+    header.label(text="Active Mesh Advanced", icon="PREFERENCES")
+
+    if not bool(scene.bi_rx_object_advanced_expanded):
+        return
+    if active_object is None or active_object.type != "MESH":
+        box.label(text="Select a mesh inside an IB collection to edit object route settings.", icon="INFO")
+        return
+
+    route_box = box.box()
+    route_box.label(text="Final Draw Route", icon="MOD_ARMATURE")
+    route_box.prop(active_object, "bi_final_skin")
+    route_box.prop(active_object, "bi_final_armature")
+    route_box.prop(active_object, "bi_force_replace_geometry")
+
+    preskin_box = box.box()
+    preskin_box.label(text="Pre-Skin Bone", icon="ARMATURE_DATA")
+    preskin_box.prop(active_object, "bi_preskin_bone_enabled")
+    preskin_fields = preskin_box.column(align=True)
+    preskin_fields.enabled = bool(getattr(active_object, "bi_preskin_bone_enabled", False))
+    preskin_fields.prop(active_object, "bi_preskin_armature")
+    preskin_fields.prop(active_object, "bi_preskin_action")
+
+    morph_box = box.box()
+    morph_box.label(text="Morph", icon="SHAPEKEY_DATA")
+    morph_box.prop(active_object, "bi_morph_enabled")
+    morph_box.prop(active_object, "bi_morph_source_object")
+    morph_box.prop(active_object, "bi_base_position_path")
+    morph_box.prop(active_object, "bi_base_position_stride")
+
+    adapter_box = box.box()
+    adapter_box.label(text="Runtime Adapters", icon="ORIENTATION_GLOBAL")
+    adapter_box.prop(active_object, "bi_match_priority")
+    adapter_box.prop(active_object, "bi_cb1_profile")
+    adapter_box.prop(active_object, "bi_vb_layout_profile")
+    adapter_box.prop(active_object, "bi_buffer_correction_mode")
+    adapter_box.prop(active_object, "bi_export_mirror_x")
+    adapter_box.prop(active_object, "bi_export_uv_mirror_u")
+    adapter_box.prop(active_object, "bi_export_uv_flip_v")
+
+    legacy_box = box.box()
+    legacy_box.label(text="Legacy Bone Map", icon="BONE_DATA")
+    legacy_box.prop(active_object, "bi_bone_enabled")
+    legacy_box.prop(active_object, "bi_bone_source_armature")
+    legacy_box.prop(active_object, "bi_bone_slot_map_json")
 
 
 class VIEW3D_PT_bone_importer(bpy.types.Panel):
-    """在 3D 视图侧边栏显示 Bone Importer 工作流。"""
+    """Show the Bone Importer workflow in the 3D View sidebar."""
 
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -23,182 +180,87 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
         layout = self.layout
         scene = context.scene
         active_object = context.active_object
+        export_collection = getattr(scene, "bi_export_collection", None)
         source_mesh = find_source_mesh_for_object(active_object)
         proxy_armature = find_proxy_armature_for_object(active_object)
-        selected_mesh_count = sum(1 for obj in context.selected_objects if obj.type == "MESH" and len(obj.vertex_groups) > 0)
-        selected_proxy_armatures = list_selected_proxy_armatures(context)
-        directly_selected_proxy_armatures = list_directly_selected_proxy_armatures(context)
-        export_collection = getattr(scene, "bi_export_collection", None)
-        try:
-            collection_draw_part_count = count_collection_draw_parts(export_collection)
-        except Exception:
-            collection_draw_part_count = 0
-        try:
-            selected_draw_part_count = len(draw_parts_from_selected_objects(context))
-        except Exception:
-            selected_draw_part_count = 0
-        selected_proxy_armature_count = len(selected_proxy_armatures)
-        direct_proxy_armature_count = len(directly_selected_proxy_armatures)
+        plan, preview_error = _build_preview_plan(export_collection)
+        has_plan = plan is not None
 
         workflow_box = layout.box()
-        workflow_box.label(text="RX Runtime Export Plan", icon="ARMATURE_DATA")
+        workflow_box.label(text="RX Export v3", icon="ARMATURE_DATA")
 
-        if active_object is None and export_collection is None:
-            workflow_box.label(text="Select a mesh/proxy armature or set an RX Export Collection.", icon="INFO")
-            return
+        setup_box = workflow_box.box()
+        setup_box.label(text="Export Setup", icon="EXPORT")
+        setup_box.prop(scene, "bi_animation_output_dir", text="Output Dir")
+        setup_box.prop(scene, "bi_capture_manifest_path", text="Capture Manifest")
+        setup_box.prop(scene, "bi_export_collection", text="RX Export Collection")
+        setup_box.prop(scene, "bi_rx_export_type")
+        setup_box.prop(scene, "bi_rx_export_geometry")
+        export_row = setup_box.row(align=True)
+        export_row.operator("object.bi_export_rx_package", text="Export RX Package", icon="EXPORT")
+        export_row.enabled = bool(has_plan)
 
-        info_box = workflow_box.box()
-        info_box.label(text=f"Source Mesh: {source_mesh.name if source_mesh else 'None'}", icon="MESH_DATA")
-        info_box.label(text=f"Proxy Armature: {proxy_armature.name if proxy_armature else 'None'}", icon="ARMATURE_DATA")
-
-        collection_box = workflow_box.box()
-        collection_box.label(text="RX Export Collection", icon="OUTLINER_COLLECTION")
-        collection_box.prop(scene, "bi_export_collection", text="Collection")
-        if export_collection is not None:
-            collection_box.prop(export_collection, "bi_cb1_override", text="Root CB1 Override")
-            collection_box.label(
-                text=f"Meshes: {count_collection_meshes(export_collection)} | Draw Parts: {collection_draw_part_count}",
-                icon="INFO",
-            )
-            collection_box.label(text="Object names define DrawParts: hash-index_count-firstindex.", icon="INFO")
-            child_collections = tuple(getattr(export_collection, "children", []) or ())
-            if child_collections:
-                child_box = collection_box.box()
-                child_box.label(text="Child CB1 Overrides", icon="OUTLINER_COLLECTION")
-                for child_collection in child_collections[:8]:
-                    child_box.prop(child_collection, "bi_cb1_override", text=child_collection.name)
-                if len(child_collections) > 8:
-                    child_box.label(text=f"{len(child_collections) - 8} more child collection(s) hidden.", icon="INFO")
-
-        generate_row = workflow_box.row(align=True)
-        generate_row.operator("object.bi_generate_proxy_rig", text="Generate Slot Proxy", icon="ARMATURE_DATA")
-        generate_row.operator("object.bi_restore_numeric_vertex_groups", icon="SORTSIZE")
-        generate_row.enabled = selected_mesh_count > 0
-        if selected_mesh_count > 1:
-            workflow_box.label(text=f"Selected Meshes: {selected_mesh_count}", icon="INFO")
-
-        binding_box = workflow_box.box()
-        binding_box.label(text="Active DrawPart Plan", icon="LINKED")
-        if active_object is not None and active_object.type == "MESH":
-            route_box = binding_box.box()
-            route_box.label(text="RX v3 Mesh Route", icon="MOD_ARMATURE")
-            route_box.prop(active_object, "bi_final_skin")
-            route_box.prop(active_object, "bi_final_armature")
-            route_box.prop(active_object, "bi_force_replace_geometry")
-            route_box.prop(active_object, "bi_preskin_bone_enabled")
-            preskin_route = route_box.column(align=True)
-            preskin_route.enabled = bool(getattr(active_object, "bi_preskin_bone_enabled", False))
-            preskin_route.prop(active_object, "bi_preskin_armature")
-            preskin_route.prop(active_object, "bi_preskin_action")
-            try:
-                draw_payload = parse_draw_part_name(active_object.name)
-            except ValueError:
-                binding_box.label(text="Active mesh name is not hash-index_count-firstindex.", icon="ERROR")
-            else:
-                binding_box.label(
-                    text=(
-                        f"hash={draw_payload['hash']} | "
-                        f"indices={draw_payload['match_index_count']} | "
-                        f"first={draw_payload['first_index']}"
-                    ),
-                    icon="INFO",
-                )
-                binding_box.prop(active_object, "bi_match_priority")
-                binding_box.prop(active_object, "bi_skin_contract")
-                binding_box.prop(active_object, "bi_cb1_profile")
-                binding_box.prop(active_object, "bi_vb_layout_profile")
-                binding_box.prop(active_object, "bi_buffer_correction_mode")
-                binding_box.prop(active_object, "bi_export_mirror_x")
-                binding_box.prop(active_object, "bi_export_uv_mirror_u")
-                binding_box.prop(active_object, "bi_export_uv_flip_v")
-
-                bone_plan = binding_box.box()
-                bone_plan.label(text="Bone Payload", icon="BONE_DATA")
-                bone_plan.prop(active_object, "bi_bone_enabled")
-                bone_plan.prop(active_object, "bi_bone_source_armature")
-                bone_plan.prop(active_object, "bi_bone_slot_map_json")
-
-                morph_plan = binding_box.box()
-                morph_plan.label(text="Morph Payload", icon="SHAPEKEY_DATA")
-                morph_plan.prop(active_object, "bi_morph_enabled")
-                morph_plan.prop(active_object, "bi_morph_source_object")
-                morph_plan.prop(active_object, "bi_base_position_path")
-                morph_plan.prop(active_object, "bi_base_position_stride")
-        else:
-            binding_box.label(text="Select a DrawPart mesh to edit per-IB settings.", icon="INFO")
-
-        animation_box = workflow_box.box()
-        animation_box.label(text="RX Clip Settings", icon="ACTION")
-        animation_box.label(
-            text="Shared clip range/output settings used by both bone and morph export.",
+        timing_box = workflow_box.box()
+        timing_box.label(text="Timeline", icon="ACTION")
+        clip_row = timing_box.row(align=True)
+        clip_row.prop(scene, "bi_animation_clip_name", text="Clip")
+        clip_row.prop(scene, "bi_animation_clip_id", text="ID")
+        frame_row = timing_box.row(align=True)
+        frame_row.prop(scene, "bi_animation_frame_start", text="Start")
+        frame_row.prop(scene, "bi_animation_frame_end", text="End")
+        timing_box.prop(scene, "bi_animation_frame_step", text="Frame Step")
+        fps_row = timing_box.row(align=True)
+        fps_row.prop(scene, "bi_rx_source_fps")
+        fps_row.prop(scene, "bi_rx_target_game_fps")
+        timing_box.prop(scene, "bi_rx_playback_speed")
+        timing_box.label(
+            text=(
+                f"Scene FPS source: {_safe_scene_fps(scene):g}; "
+                f"derived runtime step: {_derived_ticks_per_sample(scene)} present(s)"
+            ),
             icon="INFO",
         )
-        animation_box.prop(scene, "bi_animation_output_dir")
-        animation_box.prop(scene, "bi_capture_manifest_path")
-        clip_row = animation_box.row(align=True)
-        clip_row.prop(scene, "bi_animation_clip_name")
-        clip_row.prop(scene, "bi_animation_clip_id")
-        frame_row = animation_box.row(align=True)
-        frame_row.prop(scene, "bi_animation_frame_start")
-        frame_row.prop(scene, "bi_animation_frame_end")
-        animation_box.prop(scene, "bi_animation_frame_step")
-        animation_box.prop(scene, "bi_animation_fps")
-        animation_box.prop(scene, "bi_animation_presents_per_step")
-        export_space_box = animation_box.box()
-        export_space_box.label(text="Default Export Adapters", icon="ORIENTATION_GLOBAL")
-        export_space_box.prop(scene, "bi_export_mirror_x")
-        export_space_box.prop(scene, "bi_export_uv_mirror_u")
-        export_space_box.prop(scene, "bi_export_uv_flip_v")
-        animation_button_row = animation_box.row(align=True)
-        animation_button_row.operator("object.bi_export_animation", text="Export Bone Payload", icon="EXPORT")
-        animation_box.label(
-            text="Runtime speed uses Ticks/Sample as the default and can still be changed by the INI/UI speed variable.",
-            icon="INFO",
-        )
-        animation_box.enabled = (
-            selected_proxy_armature_count > 0
-            or selected_draw_part_count > 0
-            or collection_draw_part_count > 0
-        )
 
-        morph_box = workflow_box.box()
-        morph_box.label(text="RX Morph Export", icon="SHAPEKEY_DATA")
-        morph_box.label(
-            text="Exports per-mesh morph_static + morph_anim sidecars that share the RX clip timeline/master playback buffers.",
-            icon="INFO",
-        )
-        morph_box.prop(scene, "bi_morph_include_normals")
-        tangent_row = morph_box.row()
+        route_box = workflow_box.box()
+        _draw_plan_preview(route_box, scene, plan, preview_error)
+
+        active_info_box = workflow_box.box()
+        active_info_box.label(text="Active Context", icon="VIEWZOOM")
+        active_info_box.label(text=f"Source Mesh: {source_mesh.name if source_mesh else 'None'}", icon="MESH_DATA")
+        active_info_box.label(text=f"Proxy Armature: {proxy_armature.name if proxy_armature else 'None'}", icon="ARMATURE_DATA")
+
+        _draw_active_object_advanced(workflow_box.box(), scene, active_object)
+
+        defaults_box = workflow_box.box()
+        defaults_box.label(text="Default Export Adapters", icon="ORIENTATION_GLOBAL")
+        defaults_box.prop(scene, "bi_export_mirror_x")
+        defaults_box.prop(scene, "bi_export_uv_mirror_u")
+        defaults_box.prop(scene, "bi_export_uv_flip_v")
+
+        morph_defaults_box = workflow_box.box()
+        morph_defaults_box.label(text="Morph Defaults", icon="SHAPEKEY_DATA")
+        morph_defaults_box.prop(scene, "bi_morph_include_normals")
+        tangent_row = morph_defaults_box.row()
         tangent_row.enabled = bool(scene.bi_morph_include_normals)
         tangent_row.prop(scene, "bi_morph_include_tangents")
-        morph_box.prop(scene, "bi_morph_channel_mode")
-        morph_box.label(text="Per-DrawPart Morph Source/Base VB are configured on the active DrawPart.", icon="INFO")
-        morph_button_row = morph_box.row(align=True)
-        morph_button_row.operator("object.bi_export_morph", text="Export Morph Payload", icon="EXPORT")
-        morph_button_row.enabled = (
-            selected_proxy_armature_count > 0
-            or selected_draw_part_count > 0
-            or collection_draw_part_count > 0
+        morph_defaults_box.prop(scene, "bi_morph_channel_mode")
+
+        utilities_box = workflow_box.box()
+        utilities_box.label(text="Utilities", icon="TOOL_SETTINGS")
+        selected_mesh_count = sum(
+            1 for obj in context.selected_objects if obj.type == "MESH" and len(obj.vertex_groups) > 0
         )
+        utility_row = utilities_box.row(align=True)
+        utility_row.operator("object.bi_generate_proxy_rig", text="Generate Slot Proxy", icon="ARMATURE_DATA")
+        utility_row.operator("object.bi_restore_numeric_vertex_groups", text="Restore Numeric Groups", icon="SORTSIZE")
+        utility_row.enabled = selected_mesh_count > 0
+        debug_row = utilities_box.row(align=True)
+        debug_row.operator("object.bi_dump_debug", icon="FILE_TEXT")
+        debug_row.enabled = proxy_armature is not None
 
-        debug_box = workflow_box.box()
-        debug_box.label(text="Debug", icon="TEXT")
-        debug_box.operator("object.bi_dump_debug", icon="FILE_TEXT")
-        debug_box.enabled = proxy_armature is not None
-
-        if direct_proxy_armature_count > 1:
-            workflow_box.label(text=f"Direct Proxy Selection: {direct_proxy_armature_count}", icon="INFO")
-        elif collection_draw_part_count > 0:
-            workflow_box.label(text=f"Collection Draw Parts: {collection_draw_part_count}", icon="INFO")
-        elif selected_proxy_armature_count > 1:
-            workflow_box.label(text=f"Resolved Proxy Selection: {selected_proxy_armature_count}", icon="INFO")
-
-        if proxy_armature is None:
-            workflow_box.label(text="No proxy armature generated yet.", icon="INFO")
-            return
-
-        proxy_bone_count = sum(1 for pose_bone in proxy_armature.pose.bones if getattr(pose_bone, "bi_is_proxy", False))
-        workflow_box.label(text=f"Proxy Bones: {proxy_bone_count}", icon="INFO")
+        if proxy_armature is not None:
+            proxy_bone_count = sum(1 for pose_bone in proxy_armature.pose.bones if getattr(pose_bone, "bi_is_proxy", False))
+            workflow_box.label(text=f"Proxy Bones: {proxy_bone_count}", icon="INFO")
 
         active_proxy_bone = context.active_pose_bone if context.active_object == proxy_armature else None
         if active_proxy_bone and getattr(active_proxy_bone, "bi_is_proxy", False):

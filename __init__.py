@@ -20,6 +20,7 @@ REGISTERED_CLASSES = (
     operators.BI_OT_restore_numeric_vertex_groups,
     operators.BI_OT_refresh_bind,
     operators.BI_OT_export_palette,
+    operators.BI_OT_export_rx_package,
     operators.BI_OT_export_animation,
     operators.BI_OT_export_morph,
     operators.BI_OT_import_palette,

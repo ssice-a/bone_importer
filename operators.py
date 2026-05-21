@@ -4,6 +4,7 @@ import bpy
 
 from .core.draw_part import draw_parts_from_export_collection
 from .core.context import find_proxy_armature_for_object, list_selected_proxy_armatures
+from .core.runtime_ini import write_runtime_ini_from_manifest
 from .core.workflow import (
     clear_previous_palette_for_active_proxy,
     dump_debug_for_active_proxy,
@@ -27,6 +28,34 @@ def _has_export_collection_targets(context) -> bool:
         return bool(draw_parts_from_export_collection(getattr(scene, "bi_export_collection", None)))
     except Exception:
         return False
+
+
+def _resolve_rx_source_fps(scene) -> float:
+    configured_fps = float(getattr(scene, "bi_rx_source_fps", 0.0) or 0.0)
+    if configured_fps > 0.0:
+        return configured_fps
+    render = getattr(scene, "render", None)
+    scene_fps = float(getattr(render, "fps", 0.0) or 0.0)
+    return scene_fps if scene_fps > 0.0 else float(getattr(scene, "bi_animation_fps", 60.0) or 60.0)
+
+
+def _resolve_rx_ticks_per_sample(scene) -> int:
+    source_fps = max(_resolve_rx_source_fps(scene), 1e-6)
+    frame_step = max(int(getattr(scene, "bi_animation_frame_step", 1) or 1), 1)
+    sample_fps = source_fps / frame_step
+    target_fps = max(float(getattr(scene, "bi_rx_target_game_fps", 120.0) or 120.0), 1.0)
+    playback_speed = max(float(getattr(scene, "bi_rx_playback_speed", 1.0) or 1.0), 0.01)
+    return max(int(round(target_fps / max(sample_fps * playback_speed, 1e-6))), 1)
+
+
+def _sync_rx_timing_to_legacy_fields(scene) -> tuple[float, int]:
+    """Bridge the v3 intuitive UI to the current integer-tick backend."""
+
+    source_fps = _resolve_rx_source_fps(scene)
+    ticks_per_sample = _resolve_rx_ticks_per_sample(scene)
+    scene.bi_animation_fps = source_fps
+    scene.bi_animation_presents_per_step = ticks_per_sample
+    return source_fps, ticks_per_sample
 
 
 class BI_OT_generate_proxy_rig(bpy.types.Operator):
@@ -195,6 +224,92 @@ class BI_OT_export_palette(bpy.types.Operator):
         self.report({"INFO"}, message)
         if result.failed_armatures:
             self.report({"WARNING"}, "; ".join(result.failed_armatures))
+        return {"FINISHED"}
+
+
+class BI_OT_export_rx_package(bpy.types.Operator):
+    """Unified RX v3 export entry used by the sidebar."""
+
+    bl_idname = "object.bi_export_rx_package"
+    bl_label = "Export RX Package"
+    bl_description = "Export the selected RX v3 package type using one consistent timeline and UI contract"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(context.scene and _has_export_collection_targets(context))
+
+    def execute(self, context):
+        scene = context.scene
+        export_type = str(getattr(scene, "bi_rx_export_type", "FULL") or "FULL").upper()
+        source_fps, ticks_per_sample = _sync_rx_timing_to_legacy_fields(scene)
+
+        try:
+            if export_type == "INI":
+                ini_path = write_runtime_ini_from_manifest(
+                    scene.bi_animation_output_dir,
+                    scene.bi_animation_clip_name,
+                )
+                self.report({"INFO"}, f"Generated RX INI/HLSL: {ini_path}")
+                return {"FINISHED"}
+
+            bone_result = None
+            morph_result = None
+            if export_type in {"FULL", "BONE"}:
+                bone_result = export_animation_for_selected_proxy_armatures(
+                    context,
+                    output_directory=scene.bi_animation_output_dir,
+                    clip_name=scene.bi_animation_clip_name,
+                    clip_id=scene.bi_animation_clip_id,
+                    frame_start=scene.bi_animation_frame_start,
+                    frame_end=scene.bi_animation_frame_end,
+                    frame_step=scene.bi_animation_frame_step,
+                    fps=source_fps,
+                    presents_per_step=ticks_per_sample,
+                    default_loop_start=-1,
+                    default_loop_end=-1,
+                    write_metadata=bool(scene.bi_write_metadata),
+                )
+            if export_type in {"FULL", "MORPH"}:
+                morph_result = export_morph_for_selected_proxy_armatures(
+                    context,
+                    output_directory=scene.bi_animation_output_dir,
+                    clip_name=scene.bi_animation_clip_name,
+                    clip_id=scene.bi_animation_clip_id,
+                    frame_start=scene.bi_animation_frame_start,
+                    frame_end=scene.bi_animation_frame_end,
+                    frame_step=scene.bi_animation_frame_step,
+                    fps=source_fps,
+                    presents_per_step=ticks_per_sample,
+                    default_loop_start=-1,
+                    default_loop_end=-1,
+                    write_metadata=bool(scene.bi_write_metadata),
+                )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, f"RX v3 export failed: {exc}")
+            return {"CANCELLED"}
+
+        messages = [
+            f"RX {export_type} exported",
+            f"source_fps={source_fps:g}",
+            f"runtime_step={ticks_per_sample} present(s)",
+        ]
+        if bool(getattr(scene, "bi_rx_export_geometry", True)):
+            messages.append("geometry=enabled")
+        else:
+            messages.append("geometry=reuse")
+        if bone_result is not None:
+            messages.append(
+                f"bone parts={bone_result.exported_armatures}/{bone_result.selected_armatures}"
+            )
+            messages.append(f"bone frames={bone_result.sampled_frames}")
+        if morph_result is not None:
+            messages.append(f"morph meshes={morph_result.exported_morph_meshes}")
+            messages.append(f"morph channels={morph_result.total_morph_channels}")
+        self.report({"INFO"}, "; ".join(messages))
         return {"FINISHED"}
 
 
