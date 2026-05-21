@@ -107,8 +107,8 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("def _clip_default_ticks_per_sample", source)
         self.assertIn("_append_constants(lines, _clip_default_ticks_per_sample(manifest, clip_name))", source)
         self.assertIn('global persist $rx_anim_speed = {speed}', source)
-        self.assertIn("global persist $rx_anim_speed_default = 0", source)
-        self.assertIn('if $rx_anim_speed_default == 0', source)
+        self.assertIn('global persist $rx_anim_speed_default = {speed}', source)
+        self.assertIn('if $rx_anim_speed_default != {speed}', source)
         self.assertNotIn('_line(lines, "global persist $rx_anim_speed = 1")', source)
 
     def test_runtime_ini_runs_rx_ui_present_commandlist(self):
