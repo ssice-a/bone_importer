@@ -232,6 +232,53 @@ class RxGeometryTransformRulesTests(unittest.TestCase):
 
         self.assertFalse(export_buffers._is_redundant_vb3_alias(layout["vb3"], layout))
 
+    def test_pnta40_vb0_gets_implicit_tangent_field(self):
+        layout = export_buffers._normalize_vertex_layout(
+            {
+                "buffers": {
+                    "vb0": {
+                        "slot": "vb0",
+                        "stride": 40,
+                        "elements": [
+                            {"semantic": "POSITION0", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 0},
+                            {"semantic": "NORMAL0", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 12},
+                        ],
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(
+            [(field["semantic"], field["format"], field["aligned_byte_offset"]) for field in layout["vb0"]["fields"]],
+            [
+                ("POSITION0", "R32G32B32_FLOAT", 0),
+                ("NORMAL0", "R32G32B32_FLOAT", 12),
+                ("TANGENT0", "R32G32B32A32_FLOAT", 24),
+            ],
+        )
+
+    def test_pnta40_position_writer_accepts_tangent_field(self):
+        slot = export_buffers._prepare_vertex_slot(
+            "vb0",
+            {
+                "stride": 40,
+                "fields": [
+                    {"semantic_name": "POSITION", "semantic_index": 0, "semantic": "POSITION0", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 0},
+                    {"semantic_name": "NORMAL", "semantic_index": 0, "semantic": "NORMAL0", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 12},
+                    {"semantic_name": "TANGENT", "semantic_index": 0, "semantic": "TANGENT0", "format": "R32G32B32A32_FLOAT", "aligned_byte_offset": 24},
+                ],
+            },
+            "Position",
+            "Position.buf",
+            "Position.buf",
+            1,
+        )
+
+        self.assertEqual(
+            export_buffers._fast_field_plans(slot),
+            [("position3", 0), ("normal3", 12), ("tangent4", 24)],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

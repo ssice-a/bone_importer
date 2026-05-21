@@ -409,6 +409,7 @@ def _normalize_vertex_layout(layout: dict) -> dict[str, dict]:
                     "aligned_byte_offset": int(raw_field.get("aligned_byte_offset", raw_field.get("offset", 0)) or 0),
                 }
             )
+        fields = _with_implicit_position_tangent(slot_name, stride, fields)
         normalized[slot_name] = {
             "stride": stride,
             "fields": fields,
@@ -420,6 +421,49 @@ def _normalize_vertex_layout(layout: dict) -> dict[str, dict]:
     if not normalized:
         raise ValueError("Vertex layout does not contain any vertex buffers")
     return normalized
+
+
+def _with_implicit_position_tangent(slot_name: str, stride: int, fields: list[dict]) -> list[dict]:
+    if str(slot_name).lower() != "vb0" or int(stride) < 40:
+        return fields
+    if not _has_vertex_field(fields, "POSITION", 0, "R32G32B32_FLOAT", 0):
+        return fields
+    if not _has_vertex_field(fields, "NORMAL", 0, "R32G32B32_FLOAT", 12):
+        return fields
+    if _has_vertex_field(fields, "TANGENT", 0, None, None):
+        return fields
+    return [
+        *fields,
+        {
+            "semantic_name": "TANGENT",
+            "semantic_index": 0,
+            "semantic": "TANGENT0",
+            "format": "R32G32B32A32_FLOAT",
+            "aligned_byte_offset": 24,
+        },
+    ]
+
+
+def _has_vertex_field(
+    fields: list[dict],
+    semantic_name: str,
+    semantic_index: int,
+    fmt: str | None,
+    aligned_byte_offset: int | None,
+) -> bool:
+    expected_name = str(semantic_name or "").upper()
+    expected_format = _normalize_format(fmt) if fmt is not None else None
+    for field in fields:
+        if str(field.get("semantic_name", "") or "").upper() != expected_name:
+            continue
+        if int(field.get("semantic_index", 0) or 0) != int(semantic_index):
+            continue
+        if expected_format is not None and _normalize_format(str(field.get("format", "") or "")) != expected_format:
+            continue
+        if aligned_byte_offset is not None and int(field.get("aligned_byte_offset", 0) or 0) != int(aligned_byte_offset):
+            continue
+        return True
+    return False
 
 
 def _collect_part_loop_vertices(part: ExportPartPlan, export_cache: _ExportPartCache):
@@ -744,18 +788,20 @@ def _write_position_slot(
     loop_vertices: list[_LoopVertex],
     export_cache: _ExportPartCache,
 ) -> bool:
-    if any(plan[0] not in {"position3", "normal_packed", "normal3"} for plan in field_plans):
+    if any(plan[0] not in {"position3", "normal_packed", "normal3", "tangent4"} for plan in field_plans):
         return False
     position_offset = _single_plan_offset(field_plans, "position3")
     normal_packed_offset = _single_plan_offset(field_plans, "normal_packed")
     normal3_offset = _single_plan_offset(field_plans, "normal3")
-    if position_offset is None and normal_packed_offset is None and normal3_offset is None:
+    tangent4_offset = _single_plan_offset(field_plans, "tangent4")
+    if position_offset is None and normal_packed_offset is None and normal3_offset is None and tangent4_offset is None:
         return False
     if (
         int(slot.stride) == 16
         and position_offset == 0
         and normal_packed_offset == 12
         and normal3_offset is None
+        and tangent4_offset is None
     ):
         return _write_position_packed_normal_slot16(slot, loop_vertices, export_cache)
     if _write_numpy_position_slot(slot, field_plans, loop_vertices, export_cache):
@@ -812,12 +858,13 @@ def _write_numpy_position_slot(
     np = require_numpy()
     if not loop_vertices:
         return False
-    if any(plan[0] not in {"position3", "normal_packed", "normal3"} for plan in field_plans):
+    if any(plan[0] not in {"position3", "normal_packed", "normal3", "tangent4"} for plan in field_plans):
         return False
     position_offset = _single_plan_offset(field_plans, "position3")
     normal_packed_offset = _single_plan_offset(field_plans, "normal_packed")
     normal3_offset = _single_plan_offset(field_plans, "normal3")
-    if position_offset is None and normal_packed_offset is None and normal3_offset is None:
+    tangent4_offset = _single_plan_offset(field_plans, "tangent4")
+    if position_offset is None and normal_packed_offset is None and normal3_offset is None and tangent4_offset is None:
         return False
     stride = int(slot.stride)
     records = np.zeros((len(loop_vertices), stride), dtype=np.uint8)
@@ -842,6 +889,15 @@ def _write_numpy_position_slot(
             if loop_indices.size and int(loop_indices.max()) >= len(normals):
                 return False
             _numpy_assign_bytes(records[start:end], int(normal3_offset), normals[loop_indices])
+        if tangent4_offset is not None:
+            tangents = np.asarray(_game_tangent_values(first.mesh, mesh_cache), dtype=np.float32)
+            signs = np.asarray(_game_bitangent_sign_values(first.mesh, mesh_cache), dtype=np.float32)
+            if loop_indices.size and (int(loop_indices.max()) >= len(tangents) or int(loop_indices.max()) >= len(signs)):
+                return False
+            tangent4 = np.empty((end - start, 4), dtype=np.float32)
+            tangent4[:, :3] = tangents[loop_indices]
+            tangent4[:, 3] = signs[loop_indices]
+            _numpy_assign_bytes(records[start:end], int(tangent4_offset), tangent4)
     slot.output = records.tobytes()
     return True
 
@@ -1075,6 +1131,8 @@ def _fast_field_plans(slot: _PreparedVertexSlot) -> list[tuple] | None:
             plans.append(("normal_packed", offset))
         elif semantic_name == "NORMAL" and semantic_index == 0 and fmt == "R32G32B32_FLOAT":
             plans.append(("normal3", offset))
+        elif semantic_name == "TANGENT" and semantic_index == 0 and fmt == "R32G32B32A32_FLOAT":
+            plans.append(("tangent4", offset))
         elif semantic_name == "TEXCOORD" and semantic_index in {0, 1} and fmt == "R32G32_FLOAT":
             plans.append(("uv", offset, f"UV{semantic_index}"))
         elif semantic_name == "TEXCOORD" and fmt == "R8G8B8A8_SNORM":
