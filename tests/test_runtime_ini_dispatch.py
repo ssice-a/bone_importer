@@ -11,6 +11,7 @@ RUNTIME_INI_SOURCE = Path(__file__).resolve().parents[1] / "core" / "runtime_ini
 COORDINATE_CONTRACT_SOURCE = Path(__file__).resolve().parents[1] / "core" / "coordinate_contract.py"
 OPERATORS_SOURCE = Path(__file__).resolve().parents[1] / "operators.py"
 BONE_PAYLOAD_SOURCE = Path(__file__).resolve().parents[1] / "core" / "bone_payload_export.py"
+RX_EXPORT_TEST_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "export_rx_test.py"
 
 
 def _load_runtime_ini_module():
@@ -124,6 +125,12 @@ class RuntimeIniDispatchTests(unittest.TestCase):
 
         self.assertIn("presents_per_step=scene.bi_animation_presents_per_step", source)
         self.assertNotIn("presents_per_step=1,", source)
+
+    def test_rx_validation_export_defaults_to_four_ticks_per_sample(self):
+        source = RX_EXPORT_TEST_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("DEFAULT_TICKS_PER_SAMPLE = 4", source)
+        self.assertIn('_env_int("RX_EXPORT_TICKS_PER_SAMPLE", DEFAULT_TICKS_PER_SAMPLE)', source)
 
     def test_bone_payload_shared_clip_uses_exported_ticks_per_sample(self):
         source = BONE_PAYLOAD_SOURCE.read_text(encoding="utf-8")

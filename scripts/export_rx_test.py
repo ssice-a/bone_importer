@@ -31,6 +31,7 @@ BMC_CAPTURE_MANIFEST_CANDIDATES = (
 DEFAULT_FRAME_START = 1
 DEFAULT_FRAME_END = 1680
 DEFAULT_FRAME_STEP = 1
+DEFAULT_TICKS_PER_SAMPLE = 4
 
 SOURCE_COLLECTION_NAME = "BMC Export Sources"
 PROXY_ARMATURE_NAME = "RX_SharedProxy"
@@ -389,7 +390,7 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
     scene.bi_animation_frame_step = max(_env_int("RX_EXPORT_FRAME_STEP", DEFAULT_FRAME_STEP), 1)
     scene.bi_animation_fps = float(scene.render.fps or 30)
     scene.bi_animation_presents_per_step = max(
-        _env_int("RX_EXPORT_TICKS_PER_SAMPLE", int(getattr(scene, "bi_animation_presents_per_step", 1) or 1)),
+        _env_int("RX_EXPORT_TICKS_PER_SAMPLE", DEFAULT_TICKS_PER_SAMPLE),
         1,
     )
     scene.bi_morph_include_normals = True
