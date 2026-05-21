@@ -233,40 +233,58 @@ def _cross3(vector_a, vector_b):
     )
 
 
-def _encode_tangent_to_efmi_scalar(tangent_vector, normal_vector) -> float:
-    normalized_normal = _normalize_vector3(normal_vector)
-    normalized_tangent = _normalize_vector3(tangent_vector, fallback=(1.0, 0.0, 0.0))
+def _subtract3(vector_a, vector_b):
+    return (
+        float(vector_a[0]) - float(vector_b[0]),
+        float(vector_a[1]) - float(vector_b[1]),
+        float(vector_a[2]) - float(vector_b[2]),
+    )
 
-    reference_vector = (
+
+def _scale3(vector, scale: float):
+    return (
+        float(vector[0]) * float(scale),
+        float(vector[1]) * float(scale),
+        float(vector[2]) * float(scale),
+    )
+
+
+def _fallback_tangent_for_normal(normal_vector):
+    normalized_normal = _normalize_vector3(normal_vector)
+    helper_axis = (1.0, 0.0, 0.0) if abs(normalized_normal[0]) < 0.9 else (0.0, 1.0, 0.0)
+    return _normalize_vector3(_cross3(helper_axis, normalized_normal), fallback=(1.0, 0.0, 0.0))
+
+
+def _orthogonalize_tangent_to_normal(tangent_vector, normal_vector):
+    normalized_normal = _normalize_vector3(normal_vector)
+    normalized_tangent = _normalize_vector3(tangent_vector, fallback=_fallback_tangent_for_normal(normalized_normal))
+    projection = _dot3(normalized_tangent, normalized_normal)
+    tangent = _subtract3(normalized_tangent, _scale3(normalized_normal, projection))
+    return _normalize_vector3(tangent, fallback=_fallback_tangent_for_normal(normalized_normal))
+
+
+def _packed_tangent_basis(normal_vector):
+    normalized_normal = _normalize_vector3(normal_vector)
+    basis_u = (
         normalized_normal[1] - normalized_normal[2],
         normalized_normal[2] - normalized_normal[0],
         normalized_normal[0] - normalized_normal[1],
     )
-    reference_length = math.sqrt(_dot3(reference_vector, reference_vector))
-    if reference_length < 1e-6 or not math.isfinite(reference_length):
-        helper_axis = (1.0, 0.0, 0.0) if abs(normalized_normal[0]) < 0.9 else (0.0, 1.0, 0.0)
-        reference_vector = _normalize_vector3(_cross3(normalized_normal, helper_axis), fallback=(1.0, 0.0, 0.0))
-    else:
-        reference_vector = (
-            reference_vector[0] / reference_length,
-            reference_vector[1] / reference_length,
-            reference_vector[2] / reference_length,
-        )
+    projection = _dot3(basis_u, normalized_normal)
+    basis_u = _subtract3(basis_u, _scale3(normalized_normal, projection))
+    basis_u = _normalize_vector3(basis_u, fallback=_fallback_tangent_for_normal(normalized_normal))
+    basis_v = _normalize_vector3(_cross3(normalized_normal, basis_u), fallback=(0.0, 1.0, 0.0))
+    return basis_u, basis_v
 
-    bitangent_vector = _normalize_vector3(
-        _cross3(reference_vector, normalized_normal),
-        fallback=(0.0, 1.0, 0.0),
-    )
 
-    cos_theta = max(-1.0, min(1.0, _dot3(normalized_tangent, reference_vector)))
-    sin_theta = max(-1.0, min(1.0, _dot3(normalized_tangent, bitangent_vector)))
-
-    denominator = abs(cos_theta) + abs(sin_theta)
-    unit_tangent = (cos_theta / denominator) if denominator > 1e-8 else 0.0
-    encoded_tangent = 0.5 * (1.0 + unit_tangent)
-
-    sine_sign = 1.0 if sin_theta == 0.0 else _sign_not_zero(sin_theta)
-    return math.copysign(encoded_tangent, sine_sign)
+def _encode_tangent_to_efmi_scalar(tangent_vector, normal_vector) -> float:
+    normalized_normal = _normalize_vector3(normal_vector)
+    normalized_tangent = _orthogonalize_tangent_to_normal(tangent_vector, normalized_normal)
+    basis_u, basis_v = _packed_tangent_basis(normalized_normal)
+    roll_cos = max(-1.0, min(1.0, _dot3(normalized_tangent, basis_u)))
+    roll_sin = max(-1.0, min(1.0, _dot3(normalized_tangent, basis_v)))
+    denominator = abs(roll_cos) + abs(roll_sin)
+    return (roll_sin / denominator) if denominator > 1e-8 else 0.0
 
 
 def encode_normal_to_efmi_packed_uint(
