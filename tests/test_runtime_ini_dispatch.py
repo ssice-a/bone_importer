@@ -229,12 +229,24 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("[ResourceMorphBaseVB_2009f0d6_1356_0]\ntype = Buffer\nstride = 40", ini)
         self.assertIn("cs-t0 = ResourceMorphBaseVB_e78c7068_10590_0_SRV", ini)
         self.assertIn("cs-u5 = copy ResourceMorphBaseVB_e78c7068_10590_0", ini)
-        self.assertIn("dispatch = 166, 1, 1\nrun = CustomShader_ApplyMorph", ini)
         self.assertIn("ResourceGeometry_e78c7068_10590_0_part00_vb0 = ref cs-u5", ini)
+        self.assertIn(
+            "cs-u5 = copy ResourceMorphBaseVB_e78c7068_10590_0\n"
+            "ResourceGeometry_e78c7068_10590_0_part00_vb0 = ref cs-u5\n"
+            "dispatch = 166, 1, 1\n"
+            "run = CustomShader_ApplyMorph",
+            ini,
+        )
         self.assertIn("cs-t0 = ResourceMorphBaseVB_2009f0d6_1356_0_SRV", ini)
         self.assertIn("cs-u5 = copy ResourceMorphBaseVB_2009f0d6_1356_0", ini)
-        self.assertIn("dispatch = 22, 1, 1\nrun = CustomShader_ApplyMorph_PNTA40", ini)
         self.assertIn("ResourceGeometry_2009f0d6_1356_0_part00_vb0 = ref cs-u5", ini)
+        self.assertIn(
+            "cs-u5 = copy ResourceMorphBaseVB_2009f0d6_1356_0\n"
+            "ResourceGeometry_2009f0d6_1356_0_part00_vb0 = ref cs-u5\n"
+            "dispatch = 22, 1, 1\n"
+            "run = CustomShader_ApplyMorph_PNTA40",
+            ini,
+        )
         self.assertIn("run = CustomShader_UpdateBonePaletteTQ", ini)
         self.assertIn("vb0 = ref ResourceGeometry_e78c7068_10590_0_part00_vb0", ini)
         self.assertIn("vb3 = ref ResourceGeometry_e78c7068_10590_0_part00_vb0", ini)
