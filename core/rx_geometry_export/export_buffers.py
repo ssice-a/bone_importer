@@ -274,8 +274,9 @@ def _write_part_geometry_buffers(
     prepared_slots: list[_PreparedVertexSlot] = []
     for slot_name, slot_layout in sorted(normalized_layout.items(), key=lambda item: item[0]):
         if slot_name == "vb3" and _is_redundant_vb3_alias(slot_layout, normalized_layout):
-            # Some layouts alias vb3 to vb0, but eyelash-like layouts carry an
-            # independent vb3 stream. Only skip the true alias case.
+            # Some captures expose the same backing buffer through vb0 and
+            # vb3 with different semantics. Runtime should bind vb3 to vb0
+            # instead of exporting a second, synthesized stream.
             continue
         role_name = _slot_file_role(slot_name)
         file_name = f"{part.file_stem}-{role_name}.buf"
@@ -363,10 +364,20 @@ def _is_redundant_vb3_alias(slot_layout: dict, normalized_layout: dict) -> bool:
     vb0_layout = dict(normalized_layout.get("vb0", {}) or {})
     if not vb0_layout:
         return False
-    return (
-        int(slot_layout.get("stride", 0) or 0) == int(vb0_layout.get("stride", 0) or 0)
-        and list(slot_layout.get("fields", []) or []) == list(vb0_layout.get("fields", []) or [])
-    )
+    if int(slot_layout.get("stride", 0) or 0) != int(vb0_layout.get("stride", 0) or 0):
+        return False
+    if list(slot_layout.get("fields", []) or []) == list(vb0_layout.get("fields", []) or []):
+        return True
+    for identity_key in ("backing_hash", "resource_hash"):
+        slot_identity = str(slot_layout.get(identity_key, "") or "").lower()
+        vb0_identity = str(vb0_layout.get(identity_key, "") or "").lower()
+        if slot_identity and vb0_identity and slot_identity == vb0_identity:
+            return True
+    slot_source = str(slot_layout.get("source_buf", "") or "").lower()
+    vb0_source = str(vb0_layout.get("source_buf", "") or "").lower()
+    if slot_source and vb0_source and slot_source == vb0_source:
+        return int(slot_layout.get("byte_offset", 0) or 0) == int(vb0_layout.get("byte_offset", 0) or 0)
+    return False
 
 
 def _normalize_vertex_layout(layout: dict) -> dict[str, dict]:
@@ -398,7 +409,14 @@ def _normalize_vertex_layout(layout: dict) -> dict[str, dict]:
                     "aligned_byte_offset": int(raw_field.get("aligned_byte_offset", raw_field.get("offset", 0)) or 0),
                 }
             )
-        normalized[slot_name] = {"stride": stride, "fields": fields}
+        normalized[slot_name] = {
+            "stride": stride,
+            "fields": fields,
+            "resource_hash": str(raw_slot.get("resource_hash", "") or ""),
+            "backing_hash": str(raw_slot.get("backing_hash", "") or ""),
+            "source_buf": str(raw_slot.get("source_buf", raw_slot.get("file_path", "")) or ""),
+            "byte_offset": int(raw_slot.get("byte_offset", raw_slot.get("offset", 0)) or 0),
+        }
     if not normalized:
         raise ValueError("Vertex layout does not contain any vertex buffers")
     return normalized

@@ -179,6 +179,59 @@ class RxGeometryTransformRulesTests(unittest.TestCase):
         self.assertTrue(export_buffers._object_uv_mirror_u({"bmc_uv_mirror_u": True}, False))
         self.assertFalse(export_buffers._object_uv_mirror_u({"modimp_mirror_uv_u": False}, True))
 
+    def test_vb3_same_backing_as_vb0_is_redundant_alias(self):
+        layout = export_buffers._normalize_vertex_layout(
+            {
+                "buffers": {
+                    "vb0": {
+                        "slot": "vb0",
+                        "stride": 40,
+                        "backing_hash": "1d6a6186",
+                        "elements": [
+                            {"semantic": "POSITION0", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 0},
+                            {"semantic": "NORMAL0", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 12},
+                        ],
+                    },
+                    "vb3": {
+                        "slot": "vb3",
+                        "stride": 40,
+                        "backing_hash": "1d6a6186",
+                        "elements": [
+                            {"semantic": "TEXCOORD4", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 0},
+                        ],
+                    },
+                }
+            }
+        )
+
+        self.assertTrue(export_buffers._is_redundant_vb3_alias(layout["vb3"], layout))
+
+    def test_vb3_different_backing_stays_independent(self):
+        layout = export_buffers._normalize_vertex_layout(
+            {
+                "buffers": {
+                    "vb0": {
+                        "slot": "vb0",
+                        "stride": 40,
+                        "backing_hash": "position-buffer",
+                        "elements": [
+                            {"semantic": "POSITION0", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 0},
+                        ],
+                    },
+                    "vb3": {
+                        "slot": "vb3",
+                        "stride": 40,
+                        "backing_hash": "independent-extra-buffer",
+                        "elements": [
+                            {"semantic": "TEXCOORD4", "format": "R32G32B32_FLOAT", "aligned_byte_offset": 0},
+                        ],
+                    },
+                }
+            }
+        )
+
+        self.assertFalse(export_buffers._is_redundant_vb3_alias(layout["vb3"], layout))
+
 
 if __name__ == "__main__":
     unittest.main()
