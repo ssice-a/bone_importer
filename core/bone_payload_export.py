@@ -13,10 +13,14 @@ import bpy
 import numpy as np
 
 from ..constants import RESERVED_PALETTE_ROWS
+from .animation_bank import (
+    AnimationBank,
+    ClipSpec,
+    build_master_playback_rows,
+    build_timeline_static_rows,
+)
 from .bone_sample_bank import build_bone_sample_plan, resolve_sample_cache_directory, select_payload_samples
 from .animation_export import (
-    build_master_playback_uint4_rows,
-    build_timeline_static_uint4_rows,
     normalize_animation_frame_range,
     normalize_clip_name,
     resolve_animation_loop_settings,
@@ -62,16 +66,56 @@ def _pack_slot_ids_uint4(slot_ids: tuple[int, ...]) -> list[tuple[int, int, int,
     return rows
 
 
-def build_bone_static_uint4_rows(slot_ids: tuple[int, ...], sample_count: int, flags: int = BONE_PAYLOAD_FLAGS_NONE):
+def build_bone_static_uint4_rows(
+    slot_ids: tuple[int, ...],
+    sample_count: int,
+    flags: int = BONE_PAYLOAD_FLAGS_NONE,
+    clip_sample_counts: tuple[int, ...] | None = None,
+    clip_loop_ranges: tuple[tuple[int, int], ...] | None = None,
+):
     """Build the fixed Bone Payload static table."""
     normalized_slot_ids = tuple(sorted(int(slot_id) for slot_id in slot_ids))
     slot_rows = _pack_slot_ids_uint4(normalized_slot_ids)
+    normalized_clip_sample_counts = tuple(
+        max(int(value), 1)
+        for value in (clip_sample_counts or (sample_count,))
+    )
+    if not normalized_clip_sample_counts:
+        normalized_clip_sample_counts = (max(int(sample_count), 1),)
+
+    normalized_loop_ranges = []
+    for clip_index, clip_sample_count in enumerate(normalized_clip_sample_counts):
+        if clip_loop_ranges and clip_index < len(clip_loop_ranges):
+            loop_start, loop_end = clip_loop_ranges[clip_index]
+        else:
+            loop_start, loop_end = 0, clip_sample_count - 1
+        loop_start = min(max(int(loop_start), 0), clip_sample_count - 1)
+        loop_end = min(max(int(loop_end), 0), clip_sample_count - 1)
+        if loop_end < loop_start:
+            loop_start, loop_end = 0, clip_sample_count - 1
+        normalized_loop_ranges.append((loop_start, loop_end))
+
+    sample_row_base = 0
+    clip_rows = []
+    bone_count = len(normalized_slot_ids)
+    for clip_sample_count, (loop_start, loop_end) in zip(normalized_clip_sample_counts, normalized_loop_ranges):
+        clip_rows.append(
+            (
+                int(clip_sample_count),
+                int(sample_row_base),
+                int(loop_start),
+                int(loop_end),
+            )
+        )
+        sample_row_base += int(clip_sample_count) * int(bone_count) * TQ_FLOATS_PER_BONE // 4
+
     palette_row_count = RESERVED_PALETTE_ROWS + ((max(normalized_slot_ids) + 1) * 3 if normalized_slot_ids else 0)
     previous_palette_base = palette_row_count
+    clip_table_base = 2
     return [
         (
+            len(clip_rows),
             len(normalized_slot_ids),
-            max(int(sample_count), 1),
             int(RESERVED_PALETTE_ROWS),
             len(slot_rows),
         ),
@@ -79,8 +123,9 @@ def build_bone_static_uint4_rows(slot_ids: tuple[int, ...], sample_count: int, f
             int(palette_row_count),
             int(previous_palette_base),
             int(flags),
-            0,
+            int(clip_table_base),
         ),
+        *clip_rows,
         *slot_rows,
     ]
 
@@ -295,29 +340,40 @@ def write_shared_clip_buffers(output_directory, clip_name, clip_id, exported_fra
     clip_metadata_path = os.path.join(metadata_directory_path, f"{safe_clip_name}_clip.json")
 
     loop_settings = resolve_animation_loop_settings(exported_frames, -1, -1)
-    timeline_rows = build_timeline_static_uint4_rows(
-        frame_count=len(exported_frames),
-        fps=fps,
-        presents_per_step=ticks_per_sample,
-        loop_start=loop_settings["resolved_loop_start_sample"],
-        loop_end=loop_settings["resolved_loop_end_sample"],
+    frame_step = int(exported_frames[1] - exported_frames[0]) if len(exported_frames) > 1 else 1
+    clip_spec = ClipSpec(
+        name=normalized_clip_name,
+        clip_id=int(clip_id),
+        clip_index=0,
+        frame_start=int(exported_frames[0]),
+        frame_end=int(exported_frames[-1]),
+        frame_step=frame_step,
+        sample_count=len(exported_frames),
+        source_fps=float(fps),
+        target_game_fps=120.0,
+        playback_speed=1.0,
+        default_ticks_per_sample=max(int(ticks_per_sample), 1),
+        default_loop_start_sample=int(loop_settings["resolved_loop_start_sample"]),
+        default_loop_end_sample=int(loop_settings["resolved_loop_end_sample"]),
     )
-    master_rows = build_master_playback_uint4_rows(
-        frame_count=len(exported_frames),
-        presents_per_step=ticks_per_sample,
-        loop_start=loop_settings["resolved_loop_start_sample"],
-        loop_end=loop_settings["resolved_loop_end_sample"],
+    bank = AnimationBank(
+        name=normalized_clip_name,
+        clips=(clip_spec,),
+        timeline_static_path=timeline_static_path,
+        master_playback_path=master_playback_path,
     )
+    timeline_rows = build_timeline_static_rows(bank)
+    master_rows = build_master_playback_rows(bank)
     write_uint4_buffer_rows(timeline_static_path, timeline_rows)
     write_uint4_buffer_rows(master_playback_path, master_rows)
 
     metadata = {
-        "format": "rx_clip_v2",
+        "format": "rx_clip_v3",
         "clip_name": normalized_clip_name,
         "clip_id": int(clip_id),
         "frame_start": int(exported_frames[0]),
         "frame_end": int(exported_frames[-1]),
-        "frame_step": int(exported_frames[1] - exported_frames[0]) if len(exported_frames) > 1 else 1,
+        "frame_step": frame_step,
         "frame_count": len(exported_frames),
         "frame_numbers": list(exported_frames),
         "fps": float(fps),

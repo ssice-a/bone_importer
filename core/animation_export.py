@@ -8,6 +8,7 @@ import bpy
 import numpy as np
 
 from ..constants import RESERVED_PALETTE_ROWS
+from .animation_bank import AnimationBank, ClipSpec, build_master_playback_rows, build_timeline_static_rows
 from .export import build_runtime_export_plan
 from .layout import convert_matrix_to_palette_rows
 from .models import AnimationExportResult
@@ -226,59 +227,44 @@ def write_json_file(json_path, payload):
         json.dump(payload, json_file, indent=2, ensure_ascii=False)
 
 
-def build_timeline_static_uint4_rows(frame_count, fps, presents_per_step, loop_start, loop_end):
-    """Build one shared timeline-static buffer initialized from export defaults."""
+def _build_single_clip_bank(frame_count, fps, ticks_per_sample, loop_start, loop_end, clip_name="rxanimin", clip_id=0):
+    """Build the shared v3 timeline bank used by both bone and morph exports."""
     safe_frame_count = max(int(frame_count), 1)
     normalized_loop_start, normalized_loop_end = clamp_loop_sample_range(
         safe_frame_count,
         loop_start,
         loop_end,
     )
-    clip_fps = max(int(round(float(fps))), 1)
-    return [
-        (
-            safe_frame_count,
-            clip_fps,
-            max(int(presents_per_step), 1),
-            0,
-        ),
-        (
-            int(normalized_loop_start),
-            int(normalized_loop_end),
-            0,
-            0,
-        ),
-    ]
+    clip_spec = ClipSpec(
+        name=normalize_clip_name(clip_name),
+        clip_id=int(clip_id),
+        clip_index=0,
+        frame_start=0,
+        frame_end=safe_frame_count - 1,
+        frame_step=1,
+        sample_count=safe_frame_count,
+        source_fps=float(fps),
+        target_game_fps=120.0,
+        playback_speed=1.0,
+        default_ticks_per_sample=max(int(ticks_per_sample), 1),
+        default_loop_start_sample=int(normalized_loop_start),
+        default_loop_end_sample=int(normalized_loop_end),
+    )
+    return AnimationBank(name=clip_spec.name, clips=(clip_spec,))
+
+
+def build_timeline_static_uint4_rows(frame_count, fps, presents_per_step, loop_start, loop_end):
+    """Build one shared timeline-static buffer initialized from export defaults."""
+    return build_timeline_static_rows(
+        _build_single_clip_bank(frame_count, fps, presents_per_step, loop_start, loop_end)
+    )
 
 
 def build_master_playback_uint4_rows(frame_count, presents_per_step, loop_start, loop_end):
     """Build one shared master-playback buffer initialized from exported timeline defaults."""
-    safe_frame_count = max(int(frame_count), 1)
-    normalized_loop_start, normalized_loop_end = clamp_loop_sample_range(
-        safe_frame_count,
-        loop_start,
-        loop_end,
+    return build_master_playback_rows(
+        _build_single_clip_bank(frame_count, 30.0, presents_per_step, loop_start, loop_end)
     )
-    return [
-        (
-            int(ANIM_FLAG_PLAYING | ANIM_FLAG_LOOPING),
-            0,
-            0,
-            0,
-        ),
-        (
-            max(int(presents_per_step), 1),
-            int(normalized_loop_start),
-            int(normalized_loop_end),
-            0,
-        ),
-        (
-            0,
-            0,
-            0,
-            0,
-        ),
-    ]
 
 
 def build_bind_inverse_rows(export_entries):
@@ -456,8 +442,8 @@ def prepare_animation_export_job(
         "default_loop_start_sample": loop_settings["resolved_loop_start_sample"],
         "default_loop_end_sample": loop_settings["resolved_loop_end_sample"],
         "static_format": "rx_anim_static_clip_v1",
-        "timeline_static_format": "rx_anim_timeline_static_v1",
-        "master_playback_format": "rx_anim_master_playback_v2",
+        "timeline_static_format": "rx_anim_timeline_static_v3",
+        "master_playback_format": "rx_anim_master_playback_v3",
         "static_clip_layout_uint4": [
             ["bone_count", "sample_count", "reserved_rows", "slot_map_row_count"],
             ["part_base", "previous_offset", "part_size", "clip_fps"],
@@ -573,7 +559,7 @@ def build_timeline_static_metadata(clip_name, clip_id, export_results):
 
     primary_metadata = normalized_results[0].metadata
     return {
-        "format": "rx_anim_timeline_static_v1",
+        "format": "rx_anim_timeline_static_v3",
         "clip_name": str(clip_name),
         "clip_id": int(clip_id),
         "frame_start": primary_metadata["frame_start"],
@@ -589,8 +575,8 @@ def build_timeline_static_metadata(clip_name, clip_id, export_results):
         "default_loop_start_source_frame": primary_metadata["default_loop_start_source_frame"],
         "default_loop_end_source_frame": primary_metadata["default_loop_end_source_frame"],
         "timeline_static_layout_uint4": [
-            ["sample_count", "clip_fps", "default_ticks_per_sample", "reserved"],
-            ["default_loop_start_sample", "default_loop_end_sample", "reserved", "reserved"],
+            ["clip_count", "reserved", "default_clip_index", "flags"],
+            ["sample_count", "ticks_per_sample", "loop_start_sample", "loop_end_sample"],
         ],
     }
 
@@ -603,7 +589,7 @@ def build_master_playback_metadata(clip_name, clip_id, export_results):
 
     primary_metadata = normalized_results[0].metadata
     return {
-        "format": "rx_anim_master_playback_v2",
+        "format": "rx_anim_master_playback_v3",
         "clip_name": str(clip_name),
         "clip_id": int(clip_id),
         "shared_semantics": "timeline_only",
@@ -620,7 +606,7 @@ def build_master_playback_metadata(clip_name, clip_id, export_results):
         "control_buffer_layout_uint4": [
             ["flags", "previous_tick", "current_tick", "playback_tick"],
             ["ticks_per_sample", "loop_start_sample", "loop_end_sample", "seek_tick"],
-            ["seek_active", "last_control_token", "reserved", "reserved"],
+            ["seek_active", "last_control_token", "active_clip_index", "queued_clip_index"],
         ],
         "control_flag_bits": {
             "playing": 1,
@@ -754,23 +740,23 @@ def write_shared_timeline_sidecar_files(
         write_json_file(
             timeline_static_metadata_path,
             {
-                "format": "rx_anim_timeline_static_v1",
+                "format": "rx_anim_timeline_static_v3",
                 **common_payload,
                 "timeline_static_layout_uint4": [
-                    ["sample_count", "clip_fps", "default_ticks_per_sample", "reserved"],
-                    ["default_loop_start_sample", "default_loop_end_sample", "reserved", "reserved"],
+                    ["clip_count", "reserved", "default_clip_index", "flags"],
+                    ["sample_count", "ticks_per_sample", "loop_start_sample", "loop_end_sample"],
                 ],
             },
         )
         write_json_file(
             master_playback_metadata_path,
             {
-                "format": "rx_anim_master_playback_v2",
+                "format": "rx_anim_master_playback_v3",
                 **common_payload,
                 "master_playback_layout_uint4": [
                     ["flags", "previous_tick", "current_tick", "playback_tick"],
                     ["ticks_per_sample", "loop_start_sample", "loop_end_sample", "seek_tick"],
-                    ["seek_active", "last_control_token", "reserved", "reserved"],
+                    ["seek_active", "last_control_token", "active_clip_index", "queued_clip_index"],
                 ],
             },
         )

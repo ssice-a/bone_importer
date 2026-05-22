@@ -256,7 +256,8 @@ Runtime shader flow:
 
 ```text
 active_clip_index from MasterPlayback
-sample_a / sample_b / sample_alpha from TimelineStatic + MasterPlayback
+local clip row from BoneStatic
+sample_a / sample_b / sample_alpha from local clip row + MasterPlayback
 T = lerp(T_a, T_b, sample_alpha)
 Q = normalized shortest-path lerp(Q_a, Q_b, sample_alpha)
 pose = matrix_from_TQ(T, Q)
@@ -271,7 +272,7 @@ The shader remains DrawPart-local:
 update_bone_palette_tq_cs.hlsl
 ```
 
-It must be extended to read `active_clip_index` and the local clip table.
+It reads `active_clip_index` and samples the DrawPart-local clip table before loading TQ rows.
 
 Exporter flow:
 
@@ -524,11 +525,11 @@ The UI must not know how many DrawParts, Bone Payloads, or Morph Payloads exist.
 
 ## Migration Plan
 
-1. Keep one Bone Payload per DrawPart as the RX v2 bone route.
-2. Upgrade Bone Payload files from single-Clip to multi-Clip layout.
-3. Upgrade TimelineStatic and MasterPlayback with `active_clip_index`.
-4. Extend `update_bone_palette_tq_cs.hlsl` to sample local multi-Clip payloads.
-5. Extend Morph Payload animation to the same multi-Clip model.
+1. Done: keep one Bone Payload per DrawPart as the RX v2 bone route.
+2. Done: upgrade Bone Payload files from single-Clip headers to local multi-Clip table layout.
+3. Done: upgrade TimelineStatic and MasterPlayback with `active_clip_index`.
+4. Done: extend `update_bone_palette_tq_cs.hlsl` to sample local multi-Clip payloads.
+5. Next: extend Morph Payload animation to the same multi-Clip model.
 6. Keep INI resource generation DrawPart-local for bone and morph resources.
 7. Add route handling for `PASSTHROUGH`, `BONE_ONLY`, `REPLACE_MODEL`, `INJECT_MODEL`, and `MORPH_ONLY`.
 8. Delete any new global-pool implementation work from the RX v2 route.

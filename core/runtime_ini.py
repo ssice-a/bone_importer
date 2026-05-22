@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 
+from .animation_bank import build_animation_bank_from_manifest
 from .animation_export import normalize_clip_name, sanitize_export_name
 from .coordinate_contract import hlsl_coordinate_contract
 from .draw_part import DEFAULT_MATCH_PRIORITY
@@ -87,13 +88,17 @@ def resolve_runtime_ini_path(output_directory: str, clip_name: str) -> str:
 
 
 def _clip_default_ticks_per_sample(manifest: dict, clip_name: str) -> int:
-    clip = manifest.get("clips", {}).get(normalize_clip_name(clip_name), {})
-    return max(int(clip.get("default_ticks_per_sample", 1) or 1), 1)
+    bank = build_animation_bank_from_manifest(manifest, normalize_clip_name(clip_name))
+    clip_key = normalize_clip_name(clip_name)
+    for clip in bank.clips:
+        if clip.name == clip_key:
+            return max(int(clip.default_ticks_per_sample), 1)
+    return max(int(bank.default_clip.default_ticks_per_sample), 1)
 
 
 def _clip_count(manifest: dict) -> int:
-    clips = manifest.get("clips", {}) or {}
-    return max(len(clips), 1)
+    bank = build_animation_bank_from_manifest(manifest)
+    return max(len(bank.clips), 1)
 
 
 def _append_constants(lines: list[str], default_ticks_per_sample: int = 1, clip_count: int = 1):
@@ -147,10 +152,10 @@ def _append_constants(lines: list[str], default_ticks_per_sample: int = 1, clip_
 
 
 def _append_global_resources(lines: list[str], manifest: dict, clip_name: str, output_directory: str):
-    clip = manifest.get("clips", {}).get(normalize_clip_name(clip_name), {})
+    bank = build_animation_bank_from_manifest(manifest, normalize_clip_name(clip_name))
     morph_dispatch_groups = _morph_dispatch_groups_by_shader(manifest)
-    timeline_path = clip.get("timeline_static", "") or f"{sanitize_export_name(clip_name, 'rxanimin')}_timeline_static.buf"
-    master_path = clip.get("master_playback", "") or f"{sanitize_export_name(clip_name, 'rxanimin')}_master_playback.buf"
+    timeline_path = bank.timeline_static_path or f"{sanitize_export_name(clip_name, 'rxanimin')}_timeline_static.buf"
+    master_path = bank.master_playback_path or f"{sanitize_export_name(clip_name, 'rxanimin')}_master_playback.buf"
 
     _line(lines, "[ResourceTimelineStatic]")
     _line(lines, "type = StructuredBuffer")
@@ -197,8 +202,10 @@ def _append_global_resources(lines: list[str], manifest: dict, clip_name: str, o
     _line(lines)
     _line(lines, "[CustomShader_UpdateMasterPlayback]")
     _line(lines, "cs = hlsl\\update_master_playback_cs.hlsl")
+    _line(lines, "cs-t0 = ResourceTimelineStatic")
     _line(lines, "cs-u0 = ResourceMasterPlayback")
     _line(lines, "dispatch = 1, 1, 1")
+    _line(lines, "cs-t0 = null")
     _line(lines, "cs-u0 = null")
     _line(lines, "ResourceMasterPlayback_SRV = copy ResourceMasterPlayback")
     _line(lines)
@@ -1446,6 +1453,7 @@ float4 main(V2P input) : SV_Target
 }
 """,
     "update_master_playback_cs.hlsl": r"""Texture1D<float4> IniParams : register(t120);
+StructuredBuffer<uint4> TimelineStatic : register(t0);
 RWStructuredBuffer<uint4> MasterPlayback : register(u0);
 
 static const uint RX_ANIM_FLAG_PLAYING = 1u;
@@ -1461,23 +1469,15 @@ void main(uint3 id : SV_DispatchThreadID)
     uint4 playback0 = MasterPlayback[0];
     uint4 playback1 = MasterPlayback[1];
     uint4 playback2 = MasterPlayback[2];
+    uint4 timeline_header = TimelineStatic[0];
     float4 control0 = IniParams[0];
     float4 control1 = IniParams[1];
 
     uint flags = playback0.x;
     uint playback_tick = playback0.w;
-    uint ticks_per_sample = max(playback1.x, 1u);
-    uint loop_start = playback1.y;
-    uint loop_end = playback1.z;
     uint last_control_token = playback2.y;
     uint active_clip_index = playback2.z;
     uint queued_clip_index = playback2.w;
-
-    uint speed_override = (uint)max(control1.x, 0.0);
-    if (speed_override > 0u)
-    {
-        ticks_per_sample = speed_override;
-    }
 
     uint requested_playing = (uint)max(control0.x, 0.0);
     uint control_token = (uint)max(control0.y, 0.0);
@@ -1485,9 +1485,10 @@ void main(uint3 id : SV_DispatchThreadID)
     uint seek_active = (uint)max(control0.w, 0.0);
     float seek_norm = saturate(control1.y);
     uint requested_clip_index = (uint)max(control1.z, 0.0);
-    uint clip_count = max((uint)max(control1.w, 1.0), 1u);
+    uint clip_count = max(timeline_header.x, 1u);
     requested_clip_index = min(requested_clip_index, clip_count - 1u);
     queued_clip_index = requested_clip_index;
+    active_clip_index = min(active_clip_index, clip_count - 1u);
 
     if (requested_playing != 0u)
     {
@@ -1497,11 +1498,6 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         flags &= ~RX_ANIM_FLAG_PLAYING;
     }
-
-    uint loop_min = min(loop_start, loop_end);
-    uint loop_max = max(loop_start, loop_end);
-    uint loop_sample_count = max(loop_max - loop_min + 1u, 1u);
-    uint max_tick = (loop_sample_count > 1u) ? ((loop_sample_count - 1u) * ticks_per_sample) : 0u;
 
     bool restarted = false;
     if (control_token != last_control_token)
@@ -1521,6 +1517,22 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         active_clip_index = requested_clip_index;
     }
+
+    uint4 clip_row = TimelineStatic[1u + active_clip_index];
+    uint sample_count = max(clip_row.x, 1u);
+    uint ticks_per_sample = max(clip_row.y, 1u);
+    uint loop_start = min(clip_row.z, sample_count - 1u);
+    uint loop_end = min(clip_row.w, sample_count - 1u);
+    uint speed_override = (uint)max(control1.x, 0.0);
+    if (speed_override > 0u)
+    {
+        ticks_per_sample = speed_override;
+    }
+
+    uint loop_min = min(loop_start, loop_end);
+    uint loop_max = max(loop_start, loop_end);
+    uint loop_sample_count = max(loop_max - loop_min + 1u, 1u);
+    uint max_tick = (loop_sample_count > 1u) ? ((loop_sample_count - 1u) * ticks_per_sample) : 0u;
 
     if (seek_active != 0u)
     {
@@ -1579,11 +1591,14 @@ RWStructuredBuffer<float4> PanelState : register(u0);
 void main(uint3 tid : SV_DispatchThreadID)
 {
     uint4 timeline0 = TimelineStatic[0];
-    uint4 timeline1 = TimelineStatic[1];
     uint4 playback0 = MasterPlayback[0];
     uint4 playback1 = MasterPlayback[1];
+    uint4 playback2 = MasterPlayback[2];
 
-    uint sample_count = max(timeline0.x, 1u);
+    uint clip_count = max(timeline0.x, 1u);
+    uint active_clip_index = min(playback2.z, clip_count - 1u);
+    uint4 clip_row = TimelineStatic[1u + active_clip_index];
+    uint sample_count = max(clip_row.x, 1u);
     uint current_tick = playback0.z;
     uint ticks_per_sample = max(playback1.x, 1u);
     uint loop_start = min(playback1.y, sample_count - 1u);
@@ -1591,8 +1606,8 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     if (loop_end < loop_start)
     {
-        loop_start = min(timeline1.x, sample_count - 1u);
-        loop_end = min(timeline1.y, sample_count - 1u);
+        loop_start = min(clip_row.z, sample_count - 1u);
+        loop_end = min(clip_row.w, sample_count - 1u);
     }
     if (loop_end < loop_start)
     {
@@ -2052,15 +2067,15 @@ float4 BuildIdentityRow(uint row_index)
     return float4(0.0, 0.0, 1.0, 0.0);
 }
 
-uint LoadSlotId(uint bone_index)
+uint LoadSlotId(uint bone_index, uint slot_map_base)
 {
-    uint4 row = BoneStatic[2 + bone_index / 4];
-    return row[bone_index & 3];
+    uint4 row = BoneStatic[slot_map_base + bone_index / 4u];
+    return row[bone_index & 3u];
 }
 
-void LoadPose(uint sample_id, uint bone_index, uint bone_count, out float3 t, out float4 q)
+void LoadPose(uint sample_id, uint sample_row_base, uint bone_index, uint bone_count, out float3 t, out float4 q)
 {
-    uint base_row = (sample_id * bone_count + bone_index) * 2;
+    uint base_row = sample_row_base + (sample_id * bone_count + bone_index) * 2u;
     t = BoneAnim[base_row].xyz;
     q = BoneAnim[base_row + 1];
 }
@@ -2071,19 +2086,31 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     uint bone_index = dispatch_id.x;
     uint4 header0 = BoneStatic[0];
     uint4 header1 = BoneStatic[1];
-    uint bone_count = header0.x;
-    uint sample_count = header0.y;
+    uint clip_count = max(header0.x, 1u);
+    uint bone_count = header0.y;
     uint reserved_rows = header0.z;
     uint payload_flags = header1.z;
+    uint clip_table_base = header1.w;
     if (bone_index >= bone_count) return;
 
     uint4 playback0 = MasterPlayback[0];
     uint4 playback1 = MasterPlayback[1];
+    uint4 playback2 = MasterPlayback[2];
     uint current_tick = playback0.z;
     uint previous_tick = playback0.y;
     uint ticks_per_sample = playback1.x;
-    uint loop_start = playback1.y;
-    uint loop_end = playback1.z;
+    uint active_clip_index = min(playback2.z, clip_count - 1u);
+    uint slot_map_base = clip_table_base + clip_count;
+    uint4 clip_row = BoneStatic[clip_table_base + active_clip_index];
+    uint sample_count = max(clip_row.x, 1u);
+    uint sample_row_base = clip_row.y;
+    uint loop_start = min(playback1.y, sample_count - 1u);
+    uint loop_end = min(playback1.z, sample_count - 1u);
+    if (loop_end < loop_start)
+    {
+        loop_start = min(clip_row.z, sample_count - 1u);
+        loop_end = min(clip_row.w, sample_count - 1u);
+    }
 
     uint sample_a, sample_b;
     float alpha;
@@ -2091,8 +2118,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
 
     float3 ta, tb;
     float4 qa, qb;
-    LoadPose(sample_a, bone_index, bone_count, ta, qa);
-    LoadPose(sample_b, bone_index, bone_count, tb, qb);
+    LoadPose(sample_a, sample_row_base, bone_index, bone_count, ta, qa);
+    LoadPose(sample_b, sample_row_base, bone_index, bone_count, tb, qb);
     float3 t = lerp(ta, tb, alpha);
     float4 q = QuatNlerp(qa, qb, alpha);
 
@@ -2110,7 +2137,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     float4 out0, out1, out2;
     RxConvertSkinRowsFromBlenderToGame(skin0, skin1, skin2, payload_flags, out0, out1, out2);
 
-    uint slot_id = LoadSlotId(bone_index);
+    uint slot_id = LoadSlotId(bone_index, slot_map_base);
     uint row_base = reserved_rows + slot_id * 3;
     if (bone_index == 0u)
     {
@@ -2132,8 +2159,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
 
     uint previous_base = header1.y;
     ResolveTickToSampleWindow(previous_tick, sample_count, ticks_per_sample, loop_start, loop_end, sample_a, sample_b, alpha);
-    LoadPose(sample_a, bone_index, bone_count, ta, qa);
-    LoadPose(sample_b, bone_index, bone_count, tb, qb);
+    LoadPose(sample_a, sample_row_base, bone_index, bone_count, ta, qa);
+    LoadPose(sample_b, sample_row_base, bone_index, bone_count, tb, qb);
     t = lerp(ta, tb, alpha);
     q = QuatNlerp(qa, qb, alpha);
     BuildPoseRows(t, q, pose0, pose1, pose2);

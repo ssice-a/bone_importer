@@ -9,7 +9,7 @@ def _load_static_row_builder():
     module_ast = ast.parse(source_path.read_text(encoding="utf-8"))
     wanted = {"_pack_slot_ids_uint4", "build_bone_static_uint4_rows"}
     selected = [node for node in module_ast.body if isinstance(node, ast.FunctionDef) and node.name in wanted]
-    namespace = {"RESERVED_PALETTE_ROWS": 3, "BONE_PAYLOAD_FLAGS_NONE": 0}
+    namespace = {"RESERVED_PALETTE_ROWS": 3, "BONE_PAYLOAD_FLAGS_NONE": 0, "TQ_FLOATS_PER_BONE": 8}
     compiled = compile(ast.Module(body=selected, type_ignores=[]), str(source_path), "exec")
     exec(compiled, namespace)
     return namespace["build_bone_static_uint4_rows"]
@@ -58,16 +58,33 @@ class BonePayloadLayoutTests(unittest.TestCase):
 
         rows = build_bone_static_uint4_rows((0, 2), sample_count=5)
 
-        self.assertEqual(rows[0], (2, 5, 3, 1))
-        self.assertEqual(rows[1], (12, 12, 0, 0))
-        self.assertEqual(rows[2], (0, 2, 0xFFFFFFFF, 0xFFFFFFFF))
+        self.assertEqual(rows[0], (1, 2, 3, 1))
+        self.assertEqual(rows[1], (12, 12, 0, 2))
+        self.assertEqual(rows[2], (5, 0, 0, 4))
+        self.assertEqual(rows[3], (0, 2, 0xFFFFFFFF, 0xFFFFFFFF))
 
     def test_bone_static_stores_payload_flags(self):
         build_bone_static_uint4_rows = _load_static_row_builder()
 
         rows = build_bone_static_uint4_rows((0,), sample_count=5, flags=1)
 
-        self.assertEqual(rows[1], (6, 6, 1, 0))
+        self.assertEqual(rows[1], (6, 6, 1, 2))
+
+    def test_bone_static_can_store_multiple_local_clip_rows(self):
+        build_bone_static_uint4_rows = _load_static_row_builder()
+
+        rows = build_bone_static_uint4_rows(
+            (0, 1),
+            sample_count=5,
+            clip_sample_counts=(5, 7),
+            clip_loop_ranges=((0, 4), (1, 6)),
+        )
+
+        self.assertEqual(rows[0], (2, 2, 3, 1))
+        self.assertEqual(rows[1], (9, 9, 0, 2))
+        self.assertEqual(rows[2], (5, 0, 0, 4))
+        self.assertEqual(rows[3], (7, 20, 1, 6))
+        self.assertEqual(rows[4], (0, 1, 0xFFFFFFFF, 0xFFFFFFFF))
 
     def test_bind_stale_detection_compares_cached_bind_to_current_rest(self):
         flat_delta, pose_delta = _load_bind_stale_helpers()

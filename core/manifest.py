@@ -6,12 +6,79 @@ import json
 import os
 
 from ..constants import RESERVED_PALETTE_ROWS
-from .animation_export import normalize_clip_name
+from .animation_bank import (
+    RUNTIME_MANIFEST_FORMAT,
+    ClipSpec,
+    merge_clip_into_manifest,
+    normalize_clip_name,
+)
 from .draw_part import build_draw_key, draw_part_manifest_rows
 
 
 MANIFEST_FILE_NAME = "rx_export_manifest.json"
 MANIFEST_DIR_NAME = os.path.join("Meta", "Manifest")
+DEFAULT_BANK_NAME = "rxanimin"
+
+
+def _empty_runtime_manifest() -> dict:
+    return {
+        "format": RUNTIME_MANIFEST_FORMAT,
+        "animation_bank": {
+            "name": DEFAULT_BANK_NAME,
+            "default_clip_index": 0,
+            "flags": 0,
+        },
+        "clips": [],
+        "draw_parts": {},
+        "bone_exports": {},
+        "morph_exports": {},
+        "geometry_exports": {},
+        "payloads": {},
+    }
+
+
+def normalize_runtime_manifest(payload: dict | None) -> dict:
+    """Return the current Runtime Manifest shape, migrating legacy clip maps."""
+
+    normalized = dict(payload or {})
+    normalized["format"] = RUNTIME_MANIFEST_FORMAT
+    animation_bank = dict(normalized.get("animation_bank", {}) or {})
+    animation_bank.setdefault("name", DEFAULT_BANK_NAME)
+    animation_bank.setdefault("default_clip_index", 0)
+    animation_bank.setdefault("flags", 0)
+    normalized["animation_bank"] = animation_bank
+
+    raw_clips = normalized.get("clips", [])
+    if isinstance(raw_clips, dict):
+        clips = []
+        for clip_index, (clip_name, clip_payload) in enumerate(raw_clips.items()):
+            clip = dict(clip_payload or {})
+            clip.setdefault("name", normalize_clip_name(clip_name))
+            clip.setdefault("clip_name", clip["name"])
+            clip.setdefault("clip_index", clip_index)
+            clip.setdefault("clip_id", clip_index)
+            sample_count = int(clip.get("sample_count", clip.get("frame_count", 1)) or 1)
+            clip.setdefault("sample_count", sample_count)
+            clip.setdefault("frame_start", 0)
+            clip.setdefault("frame_end", max(sample_count - 1, 0))
+            clip.setdefault("frame_step", 1)
+            clip.setdefault("fps", 30.0)
+            clip.setdefault("source_fps", clip.get("fps", 30.0))
+            clip.setdefault("target_game_fps", 120.0)
+            clip.setdefault("playback_speed", 1.0)
+            clip.setdefault("default_ticks_per_sample", 1)
+            clip.setdefault("default_loop_start_sample", 0)
+            clip.setdefault("default_loop_end_sample", max(sample_count - 1, 0))
+            clips.append(clip)
+        raw_clips = clips
+    normalized["clips"] = list(raw_clips or [])
+
+    normalized.setdefault("draw_parts", {})
+    normalized.setdefault("bone_exports", {})
+    normalized.setdefault("morph_exports", {})
+    normalized.setdefault("geometry_exports", {})
+    normalized.setdefault("payloads", {})
+    return normalized
 
 
 def resolve_export_manifest_path(output_directory: str) -> str:
@@ -25,29 +92,15 @@ def load_export_manifest(output_directory: str) -> dict:
         if os.path.exists(legacy_manifest_path):
             manifest_path = legacy_manifest_path
     if not os.path.exists(manifest_path):
-        return {
-            "format": "rx_runtime_manifest_v2",
-            "clips": {},
-            "draw_parts": {},
-            "bone_exports": {},
-            "morph_exports": {},
-            "geometry_exports": {},
-            "payloads": {},
-        }
+        return _empty_runtime_manifest()
     with open(manifest_path, "r", encoding="utf-8-sig") as manifest_file:
         payload = json.load(manifest_file)
-    payload["format"] = "rx_runtime_manifest_v2"
-    payload.setdefault("clips", {})
-    payload.setdefault("draw_parts", {})
-    payload.setdefault("bone_exports", {})
-    payload.setdefault("morph_exports", {})
-    payload.setdefault("geometry_exports", {})
-    payload.setdefault("payloads", {})
-    return payload
+    return normalize_runtime_manifest(payload)
 
 
 def _clip_payload_from_metadata(clip_name: str, clip_id: int, metadata: dict) -> dict:
     return {
+        "name": normalize_clip_name(clip_name),
         "clip_name": normalize_clip_name(clip_name),
         "clip_id": int(clip_id),
         "frame_start": int(metadata["frame_start"]),
@@ -66,16 +119,24 @@ def _clip_payload_from_metadata(clip_name: str, clip_id: int, metadata: dict) ->
 def _merge_clip(manifest: dict, clip_name: str, clip_id: int, metadata: dict):
     clip_key = normalize_clip_name(clip_name)
     incoming_clip = _clip_payload_from_metadata(clip_key, clip_id, metadata)
-    existing_clip = manifest["clips"].get(clip_key)
-    if existing_clip is not None:
-        comparable_keys = ("frame_start", "frame_end", "frame_step", "sample_count", "fps")
-        for key in comparable_keys:
-            if existing_clip.get(key) != incoming_clip.get(key):
-                raise ValueError(
-                    f"Clip '{clip_key}' already exists with different {key}: "
-                    f"{existing_clip.get(key)} != {incoming_clip.get(key)}"
-                )
-    manifest["clips"][clip_key] = {**(existing_clip or {}), **incoming_clip}
+    clip_spec = ClipSpec(
+        name=clip_key,
+        clip_id=int(clip_id),
+        clip_index=int(incoming_clip.get("clip_index", 0) or 0),
+        frame_start=int(incoming_clip["frame_start"]),
+        frame_end=int(incoming_clip["frame_end"]),
+        frame_step=int(incoming_clip["frame_step"]),
+        sample_count=int(incoming_clip["sample_count"]),
+        source_fps=float(incoming_clip.get("source_fps", incoming_clip.get("fps", 30.0)) or 30.0),
+        target_game_fps=float(incoming_clip.get("target_game_fps", 120.0) or 120.0),
+        playback_speed=float(incoming_clip.get("playback_speed", 1.0) or 1.0),
+        default_ticks_per_sample=int(incoming_clip["default_ticks_per_sample"]),
+        default_loop_start_sample=int(incoming_clip["default_loop_start_sample"]),
+        default_loop_end_sample=int(incoming_clip["default_loop_end_sample"]),
+    )
+    merge_clip_into_manifest(manifest, clip_spec, DEFAULT_BANK_NAME)
+    manifest["animation_bank"]["timeline_static"] = incoming_clip.get("timeline_static", "")
+    manifest["animation_bank"]["master_playback"] = incoming_clip.get("master_playback", "")
 
 
 def write_export_manifest(
@@ -89,7 +150,7 @@ def write_export_manifest(
     clip_metadata=None,
 ) -> str:
     """Merge the current export pass into the persistent RX manifest."""
-    manifest = load_export_manifest(output_directory)
+    manifest = normalize_runtime_manifest(load_export_manifest(output_directory))
     normalized_clip_name = normalize_clip_name(clip_name)
 
     for draw_part_row in draw_part_manifest_rows(draw_parts):

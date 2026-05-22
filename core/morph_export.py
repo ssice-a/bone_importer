@@ -165,7 +165,7 @@ def build_morph_manifest(clip_name: str, clip_id: int, mesh_results: tuple[Morph
         "format": "rx_morph_manifest_v1",
         "clip_name": str(normalize_clip_name(clip_name)),
         "clip_id": int(clip_id),
-        "shared_timeline_semantics": "uses_rx_anim_master_playback_v2",
+        "shared_timeline_semantics": "uses_rx_anim_master_playback_v3",
         "per_mesh_playback_state": "none",
         "sample_window_source": "shared_master_playback.tick_to_sample_window",
         "weight_sampling_mode": "evaluated_per_sample_minus_baked_export_values",

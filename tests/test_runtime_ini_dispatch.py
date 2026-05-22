@@ -128,8 +128,36 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn('_line(lines, "z1 = $rx_anim_action_index")', source)
         self.assertIn('_line(lines, "w1 = $rx_anim_action_count")', source)
         self.assertIn("uint requested_clip_index = (uint)max(control1.z, 0.0);", source)
-        self.assertIn("uint clip_count = max((uint)max(control1.w, 1.0), 1u);", source)
         self.assertIn("MasterPlayback[2] = uint4(seek_active, last_control_token, active_clip_index, queued_clip_index);", source)
+
+    def test_runtime_master_playback_resolves_action_rows_from_timeline_static(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn('_line(lines, "cs-t0 = ResourceTimelineStatic")', source)
+        self.assertIn('_line(lines, "cs-t0 = null")', source)
+        self.assertIn("StructuredBuffer<uint4> TimelineStatic : register(t0);", source)
+        self.assertIn("uint4 timeline_header = TimelineStatic[0];", source)
+        self.assertIn("uint clip_count = max(timeline_header.x, 1u);", source)
+        self.assertIn("uint4 clip_row = TimelineStatic[1u + active_clip_index];", source)
+        self.assertIn("uint sample_count = max(clip_row.x, 1u);", source)
+
+    def test_runtime_panel_state_reads_active_action_row_from_timeline_static(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("uint active_clip_index = min(playback2.z, clip_count - 1u);", source)
+        self.assertIn("uint4 clip_row = TimelineStatic[1u + active_clip_index];", source)
+        self.assertIn("uint sample_count = max(clip_row.x, 1u);", source)
+
+    def test_bone_palette_reads_local_clip_table_before_sampling(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("uint clip_count = max(header0.x, 1u);", source)
+        self.assertIn("uint bone_count = header0.y;", source)
+        self.assertIn("uint clip_table_base = header1.w;", source)
+        self.assertIn("uint active_clip_index = min(playback2.z, clip_count - 1u);", source)
+        self.assertIn("uint4 clip_row = BoneStatic[clip_table_base + active_clip_index];", source)
+        self.assertIn("uint sample_row_base = clip_row.y;", source)
+        self.assertIn("uint base_row = sample_row_base + (sample_id * bone_count + bone_index) * 2u;", source)
 
     def test_runtime_ui_has_player_hotkey_and_action_tabs(self):
         runtime_ini = _load_runtime_ini_module()
