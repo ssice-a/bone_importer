@@ -59,6 +59,31 @@ Rules / 规则：
 | Target Game FPS / 目标游戏 FPS | Runtime present rate, default 120. / 游戏运行帧率，默认 120。 |
 | Playback Speed / 播放倍速 | Intuitive multiplier: `2.0` means 2x, `0.5` means half speed. / 直觉倍速：`2.0` 是两倍速，`0.5` 是半速。 |
 
+## Action Bank / 动作库
+
+The Action Bank panel manages clips that already exist in the current output
+folder. It edits the runtime manifest and local action payload buffers directly,
+so it is meant for package maintenance after one or more exports.
+
+动作库面板用于管理当前输出目录里已经导出的动作。它会直接修改运行时清单和
+本地动作数据缓冲，因此主要用于已有一个或多个导出结果之后的维护。
+
+| UI | Meaning / 含义 |
+| --- | --- |
+| Action / 动作 | Select an exported clip by index and name. / 按序号和名称选择已经导出的动作。 |
+| Use For Overwrite / 用于覆盖导出 | Copy the selected action name and clip id back to the normal export fields, so the next export overwrites that clip instead of appending a new one. / 把选中动作的名称和 clip id 写回普通导出字段，下一次导出会覆盖该动作，而不是追加新动作。 |
+| New Name / 新名称 | Target name for rename. / 重命名目标名称。 |
+| Rename / 重命名 | Rename the selected clip in the manifest, then regenerate INI. Payload row order is unchanged. / 只修改清单中的动作名称并重新生成 INI，不改变 payload 行顺序。 |
+| Delete / 删除 | Remove the selected clip, compact clip indices, rewrite shared timeline, bone payloads, morph payloads, and regenerate INI. Deleting the last remaining action is blocked. / 删除选中动作，压缩 clip index，重写共享时间轴、骨骼数据、形态键数据并重新生成 INI；禁止删除最后一个动作。 |
+
+Recommended workflow:
+
+推荐流程：
+
+- To replace an old action: select it in Action Bank, click `Use For Overwrite`, then export the current Blender action.
+- To rename an action: select it, fill `New Name`, click `Rename`.
+- To remove an unwanted action: select it, click `Delete`, then test the package once because all following clip indices are compacted.
+
 ## Collection Rules / 集合规则
 
 - Put only the mesh objects you intend to export under an IB Collection. / IB 集合内只放真正要导出的网格。

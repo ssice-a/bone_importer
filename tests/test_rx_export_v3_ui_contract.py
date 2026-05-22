@@ -18,6 +18,9 @@ class RXExportV3UIContractTests(unittest.TestCase):
             "bi_rx_source_fps",
             "bi_rx_target_game_fps",
             "bi_rx_playback_speed",
+            "bi_rx_action_panel_expanded",
+            "bi_rx_action_name",
+            "bi_rx_action_new_name",
             "bi_rx_preview_expanded",
             "bi_rx_object_advanced_expanded",
         ):
@@ -31,11 +34,17 @@ class RXExportV3UIContractTests(unittest.TestCase):
             "bi_rx_source_fps",
             "bi_rx_target_game_fps",
             "bi_rx_playback_speed",
+            "bi_rx_action_panel_expanded",
+            "bi_rx_action_name",
+            "bi_rx_action_new_name",
         ):
             self.assertIn(property_name, PANEL_SOURCE)
 
         self.assertIn('operator("object.bi_create_rx_export_collection"', PANEL_SOURCE)
         self.assertIn('operator("object.bi_export_rx_package"', PANEL_SOURCE)
+        self.assertIn('operator("object.bi_rx_use_action_for_export"', PANEL_SOURCE)
+        self.assertIn('operator("object.bi_rx_rename_action"', PANEL_SOURCE)
+        self.assertIn('operator("object.bi_rx_delete_action"', PANEL_SOURCE)
         self.assertNotIn('operator("object.bi_export_animation"', PANEL_SOURCE)
         self.assertNotIn('operator("object.bi_export_morph"', PANEL_SOURCE)
         self.assertNotIn('"bi_animation_presents_per_step"', PANEL_SOURCE)
@@ -49,6 +58,15 @@ class RXExportV3UIContractTests(unittest.TestCase):
         self.assertIn("class BI_OT_export_rx_package", OPERATORS_SOURCE)
         self.assertIn("bl_idname = \"object.bi_export_rx_package\"", OPERATORS_SOURCE)
         self.assertIn("operators.BI_OT_export_rx_package", INIT_SOURCE)
+        self.assertIn("class BI_OT_rx_use_action_for_export", OPERATORS_SOURCE)
+        self.assertIn("bl_idname = \"object.bi_rx_use_action_for_export\"", OPERATORS_SOURCE)
+        self.assertIn("operators.BI_OT_rx_use_action_for_export", INIT_SOURCE)
+        self.assertIn("class BI_OT_rx_rename_action", OPERATORS_SOURCE)
+        self.assertIn("bl_idname = \"object.bi_rx_rename_action\"", OPERATORS_SOURCE)
+        self.assertIn("operators.BI_OT_rx_rename_action", INIT_SOURCE)
+        self.assertIn("class BI_OT_rx_delete_action", OPERATORS_SOURCE)
+        self.assertIn("bl_idname = \"object.bi_rx_delete_action\"", OPERATORS_SOURCE)
+        self.assertIn("operators.BI_OT_rx_delete_action", INIT_SOURCE)
 
     def test_panel_uses_dedicated_translation_module(self):
         self.assertIn("from .core.i18n import tr", PANEL_SOURCE)

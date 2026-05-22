@@ -6,6 +6,11 @@ from .core.draw_part import draw_parts_from_export_collection
 from .core.context import find_proxy_armature_for_object, list_selected_proxy_armatures
 from .core.manifest import load_export_manifest
 from .core.runtime_ini import write_runtime_ini_from_manifest
+from .core.action_bank_editor import (
+    delete_action_at_index,
+    list_actions,
+    rename_action_at_index,
+)
 from .core.rx_collection_setup import (
     DEFAULT_RX_EXPORT_COLLECTION,
     apply_collection_setup_plan,
@@ -62,6 +67,18 @@ def _sync_rx_timing_to_legacy_fields(scene) -> tuple[float, int]:
     scene.bi_animation_fps = source_fps
     scene.bi_animation_presents_per_step = ticks_per_sample
     return source_fps, ticks_per_sample
+
+
+def _selected_rx_action_index(scene) -> int:
+    raw_value = str(getattr(scene, "bi_rx_action_name", "") or "").strip()
+    if raw_value in {"", "__NONE__"}:
+        raise ValueError("No exported Action is selected")
+    return int(raw_value)
+
+
+def _sync_scene_clip_to_action(scene, action: dict):
+    scene.bi_animation_clip_name = str(action.get("name", "") or scene.bi_animation_clip_name)
+    scene.bi_animation_clip_id = int(action.get("clip_id", scene.bi_animation_clip_id) or 0)
 
 
 class BI_OT_generate_proxy_rig(bpy.types.Operator):
@@ -361,6 +378,109 @@ class BI_OT_export_rx_package(bpy.types.Operator):
             messages.append(f"morph meshes={morph_result.exported_morph_meshes}")
             messages.append(f"morph channels={morph_result.total_morph_channels}")
         self.report({"INFO"}, "; ".join(messages))
+        return {"FINISHED"}
+
+
+class BI_OT_rx_use_action_for_export(bpy.types.Operator):
+    """Copy the selected exported Action into the export Clip fields."""
+
+    bl_idname = "object.bi_rx_use_action_for_export"
+    bl_label = "Use Action Name"
+    bl_description = "Copy the selected exported Action name/id into Clip Name/Clip Id so the next export overwrites it"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(context, "scene", None))
+
+    def execute(self, context):
+        scene = context.scene
+        try:
+            action_index = _selected_rx_action_index(scene)
+            actions = list_actions(scene.bi_animation_output_dir)
+            action = next(action for action in actions if int(action.get("clip_index", -1)) == action_index)
+            _sync_scene_clip_to_action(scene, action)
+        except StopIteration:
+            self.report({"ERROR"}, "Selected Action no longer exists")
+            return {"CANCELLED"}
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Clip fields now target Action {action_index}: {scene.bi_animation_clip_name}")
+        return {"FINISHED"}
+
+
+class BI_OT_rx_rename_action(bpy.types.Operator):
+    """Rename one exported Action in the Runtime Manifest."""
+
+    bl_idname = "object.bi_rx_rename_action"
+    bl_label = "Rename Action"
+    bl_description = "Rename the selected exported Action without changing its payload index"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(context, "scene", None))
+
+    def execute(self, context):
+        scene = context.scene
+        try:
+            action_index = _selected_rx_action_index(scene)
+            new_name = str(getattr(scene, "bi_rx_action_new_name", "") or "").strip()
+            if not new_name:
+                raise ValueError("New Action Name is empty")
+            result = rename_action_at_index(scene.bi_animation_output_dir, action_index, new_name)
+            scene.bi_animation_clip_name = result.renamed_name
+            scene.bi_rx_action_name = str(action_index)
+            scene.bi_rx_action_new_name = ""
+            write_runtime_ini_from_manifest(scene.bi_animation_output_dir, scene.bi_animation_clip_name)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, f"Rename Action failed: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Renamed Action {action_index} to {result.renamed_name}")
+        return {"FINISHED"}
+
+
+class BI_OT_rx_delete_action(bpy.types.Operator):
+    """Delete one exported Action and compact local payload clip tables."""
+
+    bl_idname = "object.bi_rx_delete_action"
+    bl_label = "Delete Action"
+    bl_description = "Delete the selected Action from manifest, timeline, bone payloads, and morph payloads"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(context, "scene", None))
+
+    def execute(self, context):
+        scene = context.scene
+        try:
+            action_index = _selected_rx_action_index(scene)
+            result = delete_action_at_index(scene.bi_animation_output_dir, action_index)
+            actions = list_actions(scene.bi_animation_output_dir)
+            if actions:
+                next_index = min(action_index, len(actions) - 1)
+                _sync_scene_clip_to_action(scene, actions[next_index])
+                scene.bi_rx_action_name = str(next_index)
+            write_runtime_ini_from_manifest(scene.bi_animation_output_dir, scene.bi_animation_clip_name)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, f"Delete Action failed: {exc}")
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            (
+                f"Deleted Action {action_index}: {result.deleted_name}; "
+                f"bone payloads={result.rewritten_bone_payloads}; "
+                f"morph payloads={result.rewritten_morph_payloads}"
+            ),
+        )
         return {"FINISHED"}
 
 

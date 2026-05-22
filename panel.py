@@ -120,6 +120,51 @@ def _draw_plan_preview(box, scene, plan, error_message: str):
         box.label(text=tr(scene, "preview.more", count=hidden), icon="INFO")
 
 
+def _draw_action_bank(box, scene):
+    header = box.row(align=True)
+    icon = "TRIA_DOWN" if bool(scene.bi_rx_action_panel_expanded) else "TRIA_RIGHT"
+    header.prop(scene, "bi_rx_action_panel_expanded", text="", icon=icon, emboss=False)
+    header.label(text=tr(scene, "action_bank.title"), icon="ACTION")
+
+    if not bool(scene.bi_rx_action_panel_expanded):
+        return
+
+    try:
+        from .core.action_bank_editor import list_actions
+
+        actions = list_actions(scene.bi_animation_output_dir)
+    except Exception as exc:
+        box.label(text=f"No Action Bank: {exc}", icon="INFO")
+        return
+
+    if not actions:
+        box.label(text="No exported Action yet.", icon="INFO")
+        return
+
+    box.label(text=tr(scene, "action_bank.help"), icon="INFO")
+    row = box.row(align=True)
+    row.prop(scene, "bi_rx_action_name", text=tr(scene, "action_bank.selected"))
+    row.operator("object.bi_rx_use_action_for_export", text=tr(scene, "action_bank.use"), icon="IMPORT")
+
+    rename_row = box.row(align=True)
+    rename_row.prop(scene, "bi_rx_action_new_name", text=tr(scene, "action_bank.new_name"))
+    rename_row.operator("object.bi_rx_rename_action", text=tr(scene, "action_bank.rename"), icon="GREASEPENCIL")
+
+    delete_row = box.row(align=True)
+    delete_row.alert = True
+    delete_row.operator("object.bi_rx_delete_action", text=tr(scene, "action_bank.delete"), icon="TRASH")
+
+    for action in actions[:8]:
+        action_row = box.row(align=True)
+        action_row.label(
+            text=(
+                f"{int(action.get('clip_index', 0))}: {action.get('name', 'action')} "
+                f"({int(action.get('sample_count', 0) or 0)} samples)"
+            ),
+            icon="SEQUENCE",
+        )
+
+
 def _draw_active_object_advanced(box, scene, active_object):
     header = box.row(align=True)
     icon = "TRIA_DOWN" if bool(scene.bi_rx_object_advanced_expanded) else "TRIA_RIGHT"
@@ -221,6 +266,8 @@ class VIEW3D_PT_bone_importer(bpy.types.Panel):
             text=tr(scene, "timeline.derived_step", fps=_safe_scene_fps(scene), step=_derived_ticks_per_sample(scene)),
             icon="INFO",
         )
+
+        _draw_action_bank(workflow_box.box(), scene)
 
         route_box = workflow_box.box()
         _draw_plan_preview(route_box, scene, plan, preview_error)

@@ -12,6 +12,16 @@ LANG_ZH = "ZH"
 
 
 TRANSLATIONS = {
+    "action_bank.title": ("Action Bank", "动作库"),
+    "action_bank.selected": ("Exported Action", "已导出动作"),
+    "action_bank.new_name": ("New Name", "新名称"),
+    "action_bank.use": ("Use for Overwrite", "用于覆盖导出"),
+    "action_bank.rename": ("Rename", "重命名"),
+    "action_bank.delete": ("Delete", "删除"),
+    "action_bank.help": (
+        "Same Clip Name overwrites; Delete compacts manifest, timeline, bone and morph payloads.",
+        "同名 Clip 会覆盖；删除会同步压缩 manifest、timeline、骨骼与形态键 payload。",
+    ),
     "panel.title": ("RX Export v3", "RX 导出 v3"),
     "setup.title": ("Export Setup", "导出设置"),
     "setup.output_dir": ("Output Dir", "输出目录"),

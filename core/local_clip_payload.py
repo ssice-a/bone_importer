@@ -147,6 +147,40 @@ def merge_bone_anim_clip(
     )
 
 
+def _build_bone_merge_from_clips(clips, sample_counts, loop_ranges) -> BoneAnimClipMerge:
+    sample_row_bases = []
+    row_base = 0
+    for clip_rows in clips:
+        sample_row_bases.append(row_base)
+        row_base += len(clip_rows)
+    return BoneAnimClipMerge(
+        anim_rows=np.vstack(clips) if clips else np.empty((0, 4), dtype="<f4"),
+        clip_sample_counts=tuple(int(value) for value in sample_counts),
+        clip_loop_ranges=tuple((int(start), int(end)) for start, end in loop_ranges),
+        clip_sample_row_bases=tuple(sample_row_bases),
+    )
+
+
+def delete_bone_anim_clip(existing_static_rows, existing_anim_rows, *, clip_index: int, bone_count: int) -> BoneAnimClipMerge:
+    """Remove one local Action from a Bone Payload and compact row bases."""
+
+    clips, sample_counts, loop_ranges = _extract_bone_clips(
+        existing_static_rows,
+        existing_anim_rows,
+        max(int(bone_count), 0),
+    )
+    safe_clip_index = int(clip_index)
+    if safe_clip_index < 0 or safe_clip_index >= len(clips):
+        raise ValueError(f"Bone clip index out of range: {safe_clip_index}")
+    clips = list(clips)
+    sample_counts = list(sample_counts)
+    loop_ranges = list(loop_ranges)
+    del clips[safe_clip_index]
+    del sample_counts[safe_clip_index]
+    del loop_ranges[safe_clip_index]
+    return _build_bone_merge_from_clips(clips, sample_counts, loop_ranges)
+
+
 def _morph_rows_per_sample(channel_count: int, weights_per_row: int) -> int:
     safe_weights_per_row = max(int(weights_per_row), 1)
     return max((max(int(channel_count), 1) + safe_weights_per_row - 1) // safe_weights_per_row, 1)
@@ -233,3 +267,28 @@ def merge_morph_anim_clip(existing_rows, incoming_rows, *, clip_index: int) -> n
         row_base += len(clip_payload)
     row_blocks = [np.asarray(merged_rows, dtype="<u4"), *clips]
     return np.vstack(row_blocks)
+
+
+def delete_morph_anim_clip(existing_rows, *, clip_index: int) -> np.ndarray:
+    """Remove one local Action from a Morph Payload and compact row bases."""
+
+    channel_count, weights_per_row, flags, clips, clip_rows, _anim_rows = _extract_morph_clips(
+        existing_rows,
+        "MorphAnim rows",
+    )
+    safe_clip_index = int(clip_index)
+    if safe_clip_index < 0 or safe_clip_index >= len(clips):
+        raise ValueError(f"Morph clip index out of range: {safe_clip_index}")
+    clips = list(clips)
+    clip_rows = list(clip_rows)
+    del clips[safe_clip_index]
+    del clip_rows[safe_clip_index]
+    if not clips:
+        return np.empty((0, 4), dtype="<u4")
+
+    merged_rows = [(len(clips), channel_count, weights_per_row, flags)]
+    row_base = 1 + len(clips)
+    for clip_payload, (sample_count, source_frame_start, source_frame_step) in zip(clips, clip_rows):
+        merged_rows.append((sample_count, row_base, source_frame_start, source_frame_step))
+        row_base += len(clip_payload)
+    return np.vstack([np.asarray(merged_rows, dtype="<u4"), *clips])

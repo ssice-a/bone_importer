@@ -68,6 +68,9 @@ REGISTERED_PROPERTY_PATHS = (
     (bpy.types.Scene, "bi_rx_source_fps"),
     (bpy.types.Scene, "bi_rx_target_game_fps"),
     (bpy.types.Scene, "bi_rx_playback_speed"),
+    (bpy.types.Scene, "bi_rx_action_panel_expanded"),
+    (bpy.types.Scene, "bi_rx_action_name"),
+    (bpy.types.Scene, "bi_rx_action_new_name"),
     (bpy.types.Scene, "bi_rx_preview_expanded"),
     (bpy.types.Scene, "bi_rx_object_advanced_expanded"),
     (bpy.types.Scene, "bi_export_mirror_x"),
@@ -101,6 +104,29 @@ def _draw_part_enum_items(_self, context):
             f"{draw_part.hash} | indices={draw_part.match_index_count} | first={draw_part.first_index}",
         )
         for draw_part in draw_parts
+    ]
+
+
+def _rx_action_enum_items(_self, context):
+    try:
+        from .core.action_bank_editor import list_actions
+
+        scene = getattr(context, "scene", None)
+        actions = list_actions(getattr(scene, "bi_animation_output_dir", ""))
+    except Exception:
+        return [("__NONE__", "No exported Action", "Export at least one Clip first")]
+    if not actions:
+        return [("__NONE__", "No exported Action", "Export at least one Clip first")]
+    return [
+        (
+            str(int(action.get("clip_index", action_index))),
+            f"{int(action.get('clip_index', action_index))}: {action.get('name', 'action')}",
+            (
+                f"Clip ID {int(action.get('clip_id', action_index))}; "
+                f"samples={int(action.get('sample_count', 0) or 0)}"
+            ),
+        )
+        for action_index, action in enumerate(actions)
     ]
 
 
@@ -474,6 +500,21 @@ def register_addon_properties():
         default=1.0,
         min=0.01,
         description="Intuitive speed multiplier. 2.0 is double speed, 0.5 is half speed.",
+    )
+    bpy.types.Scene.bi_rx_action_panel_expanded = bpy.props.BoolProperty(
+        name="Show Action Bank",
+        default=True,
+        description="Show exported Action Bank management controls.",
+    )
+    bpy.types.Scene.bi_rx_action_name = bpy.props.EnumProperty(
+        name="Exported Action",
+        items=_rx_action_enum_items,
+        description="Action stored in the current RX Runtime Manifest.",
+    )
+    bpy.types.Scene.bi_rx_action_new_name = bpy.props.StringProperty(
+        name="New Action Name",
+        default="",
+        description="New logical name used by the Rename Action operation.",
     )
     bpy.types.Scene.bi_rx_preview_expanded = bpy.props.BoolProperty(
         name="Show IB Preview",
