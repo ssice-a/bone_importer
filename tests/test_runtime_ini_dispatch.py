@@ -152,6 +152,32 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("run = CommandListRXSelectAction2", ui_ini)
         self.assertNotIn("run = CommandListRXSelectAction4", ui_ini)
 
+    def test_runtime_ui_exposes_keyboard_shortcuts(self):
+        runtime_ini = _load_runtime_ini_module()
+
+        ui_ini = runtime_ini.build_runtime_ui_ini({"clips": {"idle": {}}}, "idle")
+
+        self.assertIn("[KeyRXPlayPause]", ui_ini)
+        self.assertIn("key = ctrl alt VK_SPACE", ui_ini)
+        self.assertIn("run = CommandListRXTogglePlay", ui_ini)
+        self.assertIn("[KeyRXReplay]", ui_ini)
+        self.assertIn("key = ctrl alt r", ui_ini)
+        self.assertIn("[KeyRXNextAction]", ui_ini)
+        self.assertIn("key = ctrl alt n", ui_ini)
+        self.assertIn("[KeyRXSpeed]", ui_ini)
+        self.assertIn("key = ctrl alt s", ui_ini)
+        self.assertIn("[KeyRXAction1]", ui_ini)
+        self.assertIn("key = ctrl alt 1", ui_ini)
+
+    def test_runtime_ui_action_buttons_are_inside_action_page(self):
+        runtime_ini = _load_runtime_ini_module()
+
+        ui_ini = runtime_ini.build_runtime_ui_ini({"clips": {"idle": {}, "wave": {}}}, "idle")
+
+        self.assertIn("local $action_y0 = $button_y + 0.060", ui_ini)
+        self.assertIn("w87 = $rx_ui_y + 0.095", ui_ini)
+        self.assertIn("ps-t100 = ResourceRXActionPage", ui_ini)
+
     def test_panel_digits_resolve_glyph_initializes_before_branching(self):
         source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
 
