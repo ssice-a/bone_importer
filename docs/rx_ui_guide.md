@@ -67,6 +67,46 @@ Rules / 规则：
 - Explicit `partNN` child collections are allowed, but do not mix direct meshes and explicit `partNN` children in the same IB Collection. / 可以使用显式 `partNN` 子集合，但同一 IB 集合中不要混用直接网格和显式 `partNN`。
 - If any geometry is exported for an IB Collection, the original game draw is skipped. / 如果某个 IB 集合导出了几何，该 IB 的原始游戏 draw 会被跳过。
 
+## Current RX Validation Scene / 当前 RX 验证场景
+
+The current validation package at `E:\XXMI\EFMI\Mods\RX` uses:
+
+当前 `E:\XXMI\EFMI\Mods\RX` 验证包使用：
+
+```text
+RX Geometry Export Current
+  e78c7068-10590-0
+    000_面
+  2009f0d6-1356-0
+    005_睫眉
+
+RX Slot Adapters  (hidden)
+  RXEXP_e78c7068-10590-0_000_面.001
+  RXEXP_2009f0d6-1356-0_005_睫眉.001
+
+RX Runtime DrawParts
+  all DrawPart anchor objects that should receive bone payloads
+```
+
+Rules for this scene:
+
+此场景规则：
+
+- `000_面` and `005_睫眉` are the visible source meshes and shape-key sources. / `000_面` 与 `005_睫眉` 是可见源网格，也是形态键来源。
+- `RXEXP_*` meshes only provide numeric slot weights for exported `vb2`. / `RXEXP_*` 只负责给导出的 `vb2` 提供数字槽位权重。
+- `RXEXP_*` meshes must stay linked in hidden `RX Slot Adapters`; do not delete or orphan them. / `RXEXP_*` 必须挂在隐藏的 `RX Slot Adapters`，不要删除或孤儿化。
+- `Capture Manifest` should point to `E:\XXMI\EFMI\Mods\lxi\capture_manifest.json` for this validation package. / 此验证包的 `Capture Manifest` 指向 `E:\XXMI\EFMI\Mods\lxi\capture_manifest.json`。
+- The exported package should not contain `RXEXP_` or `RXTMP_RX_` in `export_manifest.json`, `rx_export_manifest.json`, or `rxanimin.ini`. / 导出后的 `export_manifest.json`、`rx_export_manifest.json`、`rxanimin.ini` 不应出现 `RXEXP_` 或 `RXTMP_RX_`。
+
+Automation command:
+
+自动化导出命令：
+
+```powershell
+$env:RX_CAPTURE_MANIFEST='E:\XXMI\EFMI\Mods\lxi\capture_manifest.json'
+& 'g:\blender5.0\blender.exe' --background 'E:\XXMI\EFMI\Mods\RX\rx_test_scene.blend' --python 'e:\vscode\bone_importer\scripts\export_rx_test.py'
+```
+
 ## Validation Checklist / 校验清单
 
 Before testing in game, check:
