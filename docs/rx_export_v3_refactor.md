@@ -91,6 +91,11 @@ Geometry Export, then restore the collection to the visible source mesh. Runtime
 manifests and generated INI must name the visible source mesh, not the temporary
 adapter.
 
+Slot Adapters must still be linked somewhere in the Blender file. Use a hidden
+internal collection such as `RX Slot Adapters`; do not leave adapters as orphan
+objects, because saving and reopening the `.blend` may purge them and make the
+next export fail.
+
 Default geometry layout:
 
 ```text
