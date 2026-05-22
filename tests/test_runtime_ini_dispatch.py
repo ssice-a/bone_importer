@@ -364,6 +364,17 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("RWStructuredBuffer<MorphVB40> RuntimeVB : register(u5);", source)
         self.assertIn('_line(lines, "cs-u5 = null")', source)
 
+    def test_runtime_morph_sampling_reads_local_clip_table(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("uint clip_count = max(anim_header.x, 1u);", source)
+        self.assertIn("uint channel_count = anim_header.y;", source)
+        self.assertIn("uint weights_per_row = max(anim_header.z, 1u);", source)
+        self.assertIn("uint active_clip_index = min(playback2.z, clip_count - 1u);", source)
+        self.assertIn("uint4 clip_row = MorphAnim[1u + active_clip_index];", source)
+        self.assertIn("uint sample_row_base = clip_row.y;", source)
+        self.assertIn("return lerp(weight_a, weight_b, sample_alpha);", source)
+
 
 if __name__ == "__main__":
     unittest.main()

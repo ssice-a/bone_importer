@@ -140,22 +140,48 @@ def build_morph_anim_header_uint4_rows(
     source_frame_step: int,
     baked_weight_row_count: int,
     weights_per_row: int = 8,
+    clip_sample_counts: tuple[int, ...] | None = None,
+    clip_source_frame_starts: tuple[int, ...] | None = None,
+    clip_source_frame_steps: tuple[int, ...] | None = None,
 ):
     """Build the fixed uint4 header rows for one morph-animation buffer."""
-    safe_sample_count = max(int(sample_count), 1)
+    normalized_sample_counts = tuple(
+        max(int(value), 1)
+        for value in (clip_sample_counts or (sample_count,))
+    )
+    if not normalized_sample_counts:
+        normalized_sample_counts = (max(int(sample_count), 1),)
+    payload_row_base = 1 + len(normalized_sample_counts)
+    clip_rows = []
+    for clip_index, clip_sample_count in enumerate(normalized_sample_counts):
+        frame_start = (
+            clip_source_frame_starts[clip_index]
+            if clip_source_frame_starts and clip_index < len(clip_source_frame_starts)
+            else source_frame_start
+        )
+        frame_step = (
+            clip_source_frame_steps[clip_index]
+            if clip_source_frame_steps and clip_index < len(clip_source_frame_steps)
+            else source_frame_step
+        )
+        clip_rows.append(
+            (
+                int(clip_sample_count),
+                int(payload_row_base),
+                int(frame_start),
+                max(int(frame_step), 1),
+            )
+        )
+        payload_row_base += max(int(baked_weight_row_count), 0)
+
     return [
         (
+            len(clip_rows),
             max(int(channel_count), 0),
-            safe_sample_count,
-            max(int(baked_weight_row_count), 0),
             max(int(weights_per_row), 1),
-        ),
-        (
-            int(clip_id),
-            int(source_frame_start),
-            max(int(source_frame_step), 1),
             0,
         ),
+        *clip_rows,
     ]
 
 

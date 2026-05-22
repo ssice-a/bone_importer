@@ -1947,23 +1947,28 @@ uint RxReadUint4Component(uint4 row, uint component_index)
     return row.w;
 }
 
-uint RxMorphRowsPerSample(uint channel_count)
+uint RxMorphRowsPerSample(uint channel_count, uint weights_per_row)
 {
-    uint weights_per_row = max(MorphAnim[0].w, 1u);
+    weights_per_row = max(weights_per_row, 1u);
     return max((max(channel_count, 1u) + weights_per_row - 1u) / weights_per_row, 1u);
 }
 
 float RxLoadMorphWeight(uint channel_index, uint sample_index)
 {
     uint4 anim_header = MorphAnim[0];
-    uint channel_count = anim_header.x;
-    uint sample_count = max(anim_header.y, 1u);
-    uint weights_per_row = max(anim_header.w, 1u);
+    uint clip_count = max(anim_header.x, 1u);
+    uint channel_count = anim_header.y;
+    uint weights_per_row = max(anim_header.z, 1u);
     if (channel_index >= channel_count) return 0.0;
 
+    uint4 playback2 = MasterPlayback[2];
+    uint active_clip_index = min(playback2.z, clip_count - 1u);
+    uint4 clip_row = MorphAnim[1u + active_clip_index];
+    uint sample_count = max(clip_row.x, 1u);
+    uint sample_row_base = clip_row.y;
     sample_index = min(sample_index, sample_count - 1u);
-    uint rows_per_sample = RxMorphRowsPerSample(channel_count);
-    uint row_index = 2u + sample_index * rows_per_sample + channel_index / weights_per_row;
+    uint rows_per_sample = RxMorphRowsPerSample(channel_count, weights_per_row);
+    uint row_index = sample_row_base + sample_index * rows_per_sample + channel_index / weights_per_row;
     uint packed_pair = RxReadUint4Component(MorphAnim[row_index], (channel_index % weights_per_row) / 2u);
     uint half_bits = ((channel_index & 1u) == 0u) ? (packed_pair & 0xffffu) : ((packed_pair >> 16u) & 0xffffu);
     return f16tof32(half_bits);
@@ -1971,15 +1976,27 @@ float RxLoadMorphWeight(uint channel_index, uint sample_index)
 
 void RxResolveMorphSampleWindow(out uint sample_a, out uint sample_b, out float sample_alpha)
 {
-    uint sample_count = max(MorphAnim[0].y, 1u);
+    uint4 anim_header = MorphAnim[0];
+    uint clip_count = max(anim_header.x, 1u);
+    uint4 playback2 = MasterPlayback[2];
+    uint active_clip_index = min(playback2.z, clip_count - 1u);
+    uint4 clip_row = MorphAnim[1u + active_clip_index];
+    uint sample_count = max(clip_row.x, 1u);
     uint4 playback0 = MasterPlayback[0];
     uint4 playback1 = MasterPlayback[1];
+    uint loop_start = min(playback1.y, sample_count - 1u);
+    uint loop_end = min(playback1.z, sample_count - 1u);
+    if (loop_end < loop_start)
+    {
+        loop_start = 0u;
+        loop_end = sample_count - 1u;
+    }
     ResolveTickToSampleWindow(
         playback0.z,
         sample_count,
         max(playback1.x, 1u),
-        playback1.y,
-        playback1.z,
+        loop_start,
+        loop_end,
         sample_a,
         sample_b,
         sample_alpha

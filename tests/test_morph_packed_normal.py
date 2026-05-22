@@ -75,6 +75,34 @@ class MorphPackedNormalTests(unittest.TestCase):
 
         self.assertAlmostEqual(morph_export.decode_efmi_packed_tangent_scalar(packed), 1.0, places=6)
 
+    def test_morph_anim_header_uses_local_clip_table_layout(self):
+        rows = morph_export.build_morph_anim_header_uint4_rows(
+            channel_count=3,
+            sample_count=5,
+            clip_id=7,
+            source_frame_start=10,
+            source_frame_step=2,
+            baked_weight_row_count=5,
+            weights_per_row=8,
+        )
+
+        self.assertEqual(rows[0], (1, 3, 8, 0))
+        self.assertEqual(rows[1], (5, 2, 10, 2))
+
+    def test_morph_anim_rows_place_payload_after_clip_table(self):
+        rows, rows_per_sample = morph_export._build_morph_anim_rows(
+            ((0.0, 0.5, 1.0), (1.0, 0.5, 0.0)),
+            channel_count=3,
+            clip_id=7,
+            source_frame_start=10,
+            source_frame_step=2,
+        )
+
+        self.assertEqual(rows_per_sample, 1)
+        self.assertEqual(tuple(int(value) for value in rows[0]), (1, 3, 8, 0))
+        self.assertEqual(tuple(int(value) for value in rows[1]), (2, 2, 10, 2))
+        self.assertEqual(len(rows), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
