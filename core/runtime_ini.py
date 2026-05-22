@@ -1345,14 +1345,15 @@ uint SpeedGlyphIndex(uint slot)
 
 uint ResolveGlyphIndex(uint slot)
 {
+    uint glyph_index = SpeedGlyphIndex(slot);
     uint mode = (uint)PARAMS.x;
     if (mode == 1u)
     {
         uint action_label = (uint)max(PARAMS.y, 0.0);
         action_label = min(action_label, 9u);
-        return (slot == 0u) ? action_label : 12u;
+        glyph_index = (slot == 0u) ? action_label : 12u;
     }
-    return SpeedGlyphIndex(slot);
+    return glyph_index;
 }
 
 #ifdef VERTEX_SHADER

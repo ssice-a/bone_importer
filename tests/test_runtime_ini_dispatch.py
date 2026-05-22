@@ -152,6 +152,13 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("run = CommandListRXSelectAction2", ui_ini)
         self.assertNotIn("run = CommandListRXSelectAction4", ui_ini)
 
+    def test_panel_digits_resolve_glyph_initializes_before_branching(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("uint glyph_index = SpeedGlyphIndex(slot);", source)
+        self.assertIn("glyph_index = (slot == 0u) ? action_label : 12u;", source)
+        self.assertIn("return glyph_index;", source)
+
     def test_export_buttons_forward_ticks_per_sample_setting(self):
         source = OPERATORS_SOURCE.read_text(encoding="utf-8")
 
