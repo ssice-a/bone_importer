@@ -74,7 +74,26 @@ class RxExportScriptContractTests(unittest.TestCase):
 
         self.assertIn("def _rewrite_geometry_manifest_to_visible_sources", source)
         self.assertIn("_rewrite_geometry_manifest_to_visible_sources(bmc_manifest, exported_targets)", source)
+        self.assertIn('bmc_manifest["export_source_collection"] = USER_EXPORT_COLLECTION_NAME', source)
+        self.assertIn('bmc_manifest["export_collection"] = USER_EXPORT_COLLECTION_NAME', source)
         self.assertIn("record[\"object_names\"] = [exported[\"geometry_source\"].name]", source)
+
+    def test_validation_scene_uses_ib_children_under_user_export_root(self):
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('USER_EXPORT_COLLECTION_NAME = "RX Export Collection"', source)
+        self.assertIn("def _sync_user_export_collection", source)
+        self.assertIn("draw_collection = bpy.data.collections.new(target_name)", source)
+        self.assertIn("_link_object_once(draw_collection, export_object)", source)
+
+    def test_runtime_draw_part_collection_is_hidden_and_ib_structured(self):
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("def _sync_runtime_drawpart_collection", source)
+        self.assertIn("runtime_collection.hide_viewport = True", source)
+        self.assertIn("draw_collection = bpy.data.collections.new(target_name)", source)
+        self.assertIn("_link_object_once(draw_collection, target)", source)
+        self.assertNotIn("_link_object_once(runtime_collection, target)", source)
 
 
 if __name__ == "__main__":

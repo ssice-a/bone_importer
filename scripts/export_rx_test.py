@@ -31,8 +31,9 @@ DEFAULT_TICKS_PER_SAMPLE = 4
 
 SOURCE_COLLECTION_NAME = "BMC Export Sources"
 PROXY_ARMATURE_NAME = "RX_SharedProxy"
+USER_EXPORT_COLLECTION_NAME = "RX Export Collection"
 RUNTIME_COLLECTION_NAME = "RX Runtime DrawParts"
-GEOMETRY_EXPORT_COLLECTION_NAME = "RX Geometry Export Current"
+GEOMETRY_EXPORT_COLLECTION_NAME = "RX Geometry Temp Export"
 TEMP_GEOMETRY_OBJECT_PREFIX = "RXTMP_RX_"
 
 REPLACEMENT_GEOMETRY = {
@@ -149,6 +150,7 @@ def _print_export_performance(perf_report: dict):
         (
             "setup_seconds",
             "collect_runtime_targets_seconds",
+            "sync_user_export_collection_seconds",
             "geometry_export_seconds",
             "configure_draw_parts_seconds",
             "build_draw_parts_seconds",
@@ -361,9 +363,9 @@ def _make_geometry_export_object(target_name: str, config: dict):
     return geometry_source, export_obj, slot_adapter
 
 
-def _restore_geometry_collection_to_sources(root, exported_targets: dict):
+def _remove_temp_geometry_export(root, exported_targets: dict):
     temp_objects = []
-    for target_name, exported in exported_targets.items():
+    for target_name, _exported in exported_targets.items():
         region = root.children.get(target_name)
         if region is None:
             continue
@@ -371,20 +373,25 @@ def _restore_geometry_collection_to_sources(root, exported_targets: dict):
             if obj.name.startswith(TEMP_GEOMETRY_OBJECT_PREFIX):
                 temp_objects.append(obj)
             region.objects.unlink(obj)
-        _link_object_once(region, exported["geometry_source"])
     for obj in temp_objects:
         mesh = getattr(obj, "data", None)
         bpy.data.objects.remove(obj, do_unlink=True)
         if mesh is not None and getattr(mesh, "users", 0) == 0:
             bpy.data.meshes.remove(mesh)
+    _remove_collection(root.name)
 
 
 def _rewrite_geometry_manifest_to_visible_sources(bmc_manifest: dict, exported_targets: dict):
+    bmc_manifest["export_source_collection"] = USER_EXPORT_COLLECTION_NAME
+    bmc_manifest["export_collection"] = USER_EXPORT_COLLECTION_NAME
+
     for record in bmc_manifest.get("geometry_buffers", []) or []:
-        exported = exported_targets.get(_geometry_key(record))
+        target_key = _geometry_key(record)
+        exported = exported_targets.get(target_key)
         if not exported:
             continue
         visible_name = exported["geometry_source"].name
+        record["region_collection"] = target_key
         record["object_names"] = [visible_name]
         for draw in record.get("object_draws", []) or []:
             draw["object_name"] = visible_name
@@ -397,13 +404,16 @@ def _rewrite_geometry_manifest_to_visible_sources(bmc_manifest: dict, exported_t
         )
         exported = exported_targets.get(target_key)
         if exported:
+            record["region_collection"] = target_key
             record["object"] = exported["geometry_source"].name
 
     for record in bmc_manifest.get("palettes", []) or []:
-        exported = exported_targets.get(_geometry_key(record))
+        target_key = _geometry_key(record)
+        exported = exported_targets.get(target_key)
         if not exported:
             continue
         visible_name = exported["geometry_source"].name
+        record["region_collection"] = target_key
         for usage in record.get("object_usages", []) or []:
             usage["object"] = visible_name
 
@@ -440,6 +450,39 @@ def _collect_runtime_targets():
     if not targets:
         raise RuntimeError("No RX runtime draw parts found")
     return targets
+
+
+def _object_for_user_export_collection(target_name: str, target):
+    config = REPLACEMENT_GEOMETRY.get(target_name)
+    if not config:
+        return target
+    source = bpy.data.objects.get(config["geometry_object"])
+    if source is None or source.type != "MESH":
+        raise RuntimeError(f"Replacement geometry mesh not found: {config['geometry_object']}")
+    _set_export_contract(source, config)
+    return source
+
+
+def _sync_user_export_collection(runtime_targets: dict):
+    root = _new_collection(USER_EXPORT_COLLECTION_NAME)
+    for target_name, target in sorted(runtime_targets.items()):
+        draw_collection = bpy.data.collections.new(target_name)
+        root.children.link(draw_collection)
+        export_object = _object_for_user_export_collection(target_name, target)
+        _link_object_once(draw_collection, export_object)
+    bpy.context.scene.bi_export_collection = root
+    return root
+
+
+def _sync_runtime_drawpart_collection(runtime_targets: dict):
+    runtime_collection = _new_collection(RUNTIME_COLLECTION_NAME)
+    runtime_collection.hide_viewport = True
+    runtime_collection.hide_render = True
+    for target_name, target in sorted(runtime_targets.items()):
+        draw_collection = bpy.data.collections.new(target_name)
+        runtime_collection.children.link(draw_collection)
+        _link_object_once(draw_collection, target)
+    return runtime_collection
 
 
 def _export_geometry_with_rx(runtime_targets: dict):
@@ -484,7 +527,7 @@ def _export_geometry_with_rx(runtime_targets: dict):
         record = dict(records_by_key[target_name])
         record["object_names"] = [exported["geometry_source"].name]
         geometry_records.append(record)
-    _restore_geometry_collection_to_sources(root, exported_targets)
+    _remove_temp_geometry_export(root, exported_targets)
 
     return {
         "result": result,
@@ -520,9 +563,8 @@ def _configure_geometry_draw_part(target, config, geometry_record, geometry_sour
     target.bi_skin_contract = "EXPLICIT_SLOT_MAP"
 
 
-def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
+def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict, runtime_collection):
     scene = bpy.context.scene
-    runtime_collection = _new_collection(RUNTIME_COLLECTION_NAME)
     scene.bi_export_collection = runtime_collection
     scene.bi_animation_output_dir = OUTPUT_DIR
     scene.bi_capture_manifest_path = os.environ.get(
@@ -548,7 +590,6 @@ def _configure_runtime_draw_parts(geometry_export, runtime_targets: dict):
     geometry_by_key = {_geometry_key(record): record for record in geometry_export["geometry_records"]}
     configured = {}
     for target_name, target in sorted(runtime_targets.items()):
-        _link_object_once(runtime_collection, target)
         target.bi_bone_enabled = True
         target.bi_match_priority = -1000
 
@@ -616,10 +657,14 @@ def main():
     runtime_targets = _collect_runtime_targets()
     timings["collect_runtime_targets_seconds"] = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
+    _sync_user_export_collection(runtime_targets)
+    timings["sync_user_export_collection_seconds"] = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     geometry_export = _export_geometry_with_rx(runtime_targets)
     timings["geometry_export_seconds"] = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
-    configured = _configure_runtime_draw_parts(geometry_export, runtime_targets)
+    runtime_collection = _sync_runtime_drawpart_collection(runtime_targets)
+    configured = _configure_runtime_draw_parts(geometry_export, runtime_targets, runtime_collection)
     timings["configure_draw_parts_seconds"] = time.perf_counter() - stage_start
 
     from bone_importer.core.draw_part import build_target_draw_parts

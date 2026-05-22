@@ -74,7 +74,7 @@ The current validation package at `E:\XXMI\EFMI\Mods\RX` uses:
 当前 `E:\XXMI\EFMI\Mods\RX` 验证包使用：
 
 ```text
-RX Geometry Export Current
+RX Export Collection
   e78c7068-10590-0
     000_面
   2009f0d6-1356-0
@@ -84,8 +84,10 @@ RX Slot Adapters  (hidden)
   RXEXP_e78c7068-10590-0_000_面.001
   RXEXP_2009f0d6-1356-0_005_睫眉.001
 
-RX Runtime DrawParts
-  all DrawPart anchor objects that should receive bone payloads
+RX Runtime DrawParts  (hidden/internal)
+  1377f2c3-59679-0
+    1377f2c3-59679-0
+  ...
 ```
 
 Rules for this scene:
@@ -95,6 +97,8 @@ Rules for this scene:
 - `000_面` and `005_睫眉` are the visible source meshes and shape-key sources. / `000_面` 与 `005_睫眉` 是可见源网格，也是形态键来源。
 - `RXEXP_*` meshes only provide numeric slot weights for exported `vb2`. / `RXEXP_*` 只负责给导出的 `vb2` 提供数字槽位权重。
 - `RXEXP_*` meshes must stay linked in hidden `RX Slot Adapters`; do not delete or orphan them. / `RXEXP_*` 必须挂在隐藏的 `RX Slot Adapters`，不要删除或孤儿化。
+- `RX Runtime DrawParts` is internal and hidden; users should drag meshes into `RX Export Collection` IB children instead. / `RX Runtime DrawParts` 是隐藏内部集合；用户应把网格拖到 `RX Export Collection` 的 IB 子集合下。
+- Direct meshes under an IB child are implicit `part00`; explicit `partNN` collections are only allowed inside an IB child. / IB 子集合下的直接网格才是隐式 `part00`；显式 `partNN` 只允许出现在 IB 子集合内部。
 - `Capture Manifest` should point to `E:\XXMI\EFMI\Mods\lxi\capture_manifest.json` for this validation package. / 此验证包的 `Capture Manifest` 指向 `E:\XXMI\EFMI\Mods\lxi\capture_manifest.json`。
 - The exported package should not contain `RXEXP_` or `RXTMP_RX_` in `export_manifest.json`, `rx_export_manifest.json`, or `rxanimin.ini`. / 导出后的 `export_manifest.json`、`rx_export_manifest.json`、`rxanimin.ini` 不应出现 `RXEXP_` 或 `RXTMP_RX_`。
 
