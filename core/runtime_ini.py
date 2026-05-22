@@ -658,7 +658,7 @@ def build_runtime_ui_ini(manifest: dict | None = None, clip_name: str = "rxanimi
     _line(lines, "if $ww > 0")
     _line(lines, "    $aspect_fix = $wh / $ww")
     _line(lines, "endif")
-    _line(lines, "local $panel_h = 0.34")
+    _line(lines, "local $panel_h = 0.38")
     _line(lines, "local $panel_w = $panel_h * 1024.0 / 756.0 * $aspect_fix")
     _line(lines, "local $title_h = 0.04")
     _line(lines, "local $inner_x = $rx_ui_x + 0.02")
@@ -679,12 +679,14 @@ def build_runtime_ui_ini(manifest: dict | None = None, clip_name: str = "rxanimi
     _line(lines, "local $bar_y = $button_y + $button_h + 0.025")
     _line(lines, "local $bar_w = $inner_w")
     _line(lines, "local $bar_h = $bar_w * 56.0 / 1024.0 / $aspect_fix")
-    _line(lines, "local $action_button_w = ($inner_w - $button_gap) / 2.0")
-    _line(lines, "local $action_button_h = $action_button_w / (180.0 / 72.0 * $aspect_fix)")
-    _line(lines, "local $action_y0 = $button_y + 0.060")
-    _line(lines, "local $action_y1 = $action_y0 + $action_button_h + $button_gap")
-    _line(lines, "local $action_x0 = $inner_x")
-    _line(lines, "local $action_x1 = $inner_x + $action_button_w + $button_gap")
+    _line(lines, "local $action_gap = 0.006")
+    _line(lines, "local $action_button_w = $inner_w * 0.33")
+    _line(lines, "local $action_button_h = $action_button_w / (360.0 / 72.0 * $aspect_fix)")
+    _line(lines, "local $action_x0 = $inner_x + 0.014")
+    _line(lines, "local $action_y0 = $rx_ui_y + 0.142")
+    _line(lines, "local $action_y1 = $action_y0 + $action_button_h + $action_gap")
+    _line(lines, "local $action_y2 = $action_y1 + $action_button_h + $action_gap")
+    _line(lines, "local $action_y3 = $action_y2 + $action_button_h + $action_gap")
     _line(lines)
     _line(lines, "if $rx_ui_drag == 1")
     _line(lines, "    if $rx_ui_hold == 1")
@@ -729,9 +731,9 @@ def build_runtime_ui_ini(manifest: dict | None = None, clip_name: str = "rxanimi
     _line(lines, "        $rx_ui_hover = 9")
     for action_index, (x_name, y_name) in enumerate((
         ("$action_x0", "$action_y0"),
-        ("$action_x1", "$action_y0"),
         ("$action_x0", "$action_y1"),
-        ("$action_x1", "$action_y1"),
+        ("$action_x0", "$action_y2"),
+        ("$action_x0", "$action_y3"),
     )):
         _line(lines, f"    elif $rx_ui_tab == 2 && $rx_anim_action_count > {action_index} && $rx_ui_cursor_x > {x_name} && $rx_ui_cursor_x < {x_name} + $action_button_w && $rx_ui_cursor_y > {y_name} && $rx_ui_cursor_y < {y_name} + $action_button_h")
         _line(lines, f"        $rx_ui_hover = {20 + action_index}")
@@ -816,7 +818,7 @@ def _append_ui_draw_command(lines: list[str], action_button_count: int):
     _line(lines, "if $ww > 0")
     _line(lines, "    $aspect_fix = $wh / $ww")
     _line(lines, "endif")
-    _line(lines, "local $panel_h = 0.34")
+    _line(lines, "local $panel_h = 0.38")
     _line(lines, "local $panel_w = $panel_h * 1024.0 / 756.0 * $aspect_fix")
     _line(lines, "local $title_h = 0.04")
     _line(lines, "local $inner_x = $rx_ui_x + 0.02")
@@ -849,14 +851,16 @@ def _append_ui_draw_command(lines: list[str], action_button_count: int):
     _line(lines, "local $watermark_w = $watermark_h * 1024.0 / 64.0 * $aspect_fix")
     _line(lines, "local $watermark_x = $inner_x + ($inner_w - $watermark_w) * 0.5")
     _line(lines, "local $watermark_y = $bar_y + $bar_h + 0.014")
-    _line(lines, "local $action_button_w = ($inner_w - $button_gap) / 2.0")
-    _line(lines, "local $action_button_h = $action_button_w / (180.0 / 72.0 * $aspect_fix)")
+    _line(lines, "local $action_gap = 0.006")
+    _line(lines, "local $action_button_w = $inner_w * 0.33")
+    _line(lines, "local $action_button_h = $action_button_w / (360.0 / 72.0 * $aspect_fix)")
     _line(lines, "local $action_digit_h = $action_button_h * 0.42")
     _line(lines, "local $action_digit_w = $action_digit_h * 48.0 / 64.0 * $aspect_fix")
-    _line(lines, "local $action_y0 = $button_y + 0.060")
-    _line(lines, "local $action_y1 = $action_y0 + $action_button_h + $button_gap")
-    _line(lines, "local $action_x0 = $inner_x")
-    _line(lines, "local $action_x1 = $inner_x + $action_button_w + $button_gap")
+    _line(lines, "local $action_x0 = $inner_x + 0.014")
+    _line(lines, "local $action_y0 = $rx_ui_y + 0.142")
+    _line(lines, "local $action_y1 = $action_y0 + $action_button_h + $action_gap")
+    _line(lines, "local $action_y2 = $action_y1 + $action_button_h + $action_gap")
+    _line(lines, "local $action_y3 = $action_y2 + $action_button_h + $action_gap")
     _line(lines)
     _line(lines, "x89 = 1.0")
     _line(lines, "y89 = 1.0")
@@ -1001,9 +1005,9 @@ def _append_ui_draw_command(lines: list[str], action_button_count: int):
     _line(lines, "    run = CustomShader_RXPanelSprite")
     for action_index, (x_name, y_name) in enumerate((
         ("$action_x0", "$action_y0"),
-        ("$action_x1", "$action_y0"),
         ("$action_x0", "$action_y1"),
-        ("$action_x1", "$action_y1"),
+        ("$action_x0", "$action_y2"),
+        ("$action_x0", "$action_y3"),
     )):
         if action_index >= action_button_count:
             continue
@@ -1063,23 +1067,28 @@ def write_runtime_ui_assets(output_directory: str):
 
         def font(size: int):
             for path in (
-                r"C:\Windows\Fonts\msyh.ttc",
-                r"C:\Windows\Fonts\segoeui.ttf",
+                r"C:\Windows\Fonts\bahnschrift.ttf",
+                r"C:\Windows\Fonts\segoeuib.ttf",
                 r"C:\Windows\Fonts\seguisb.ttf",
+                r"C:\Windows\Fonts\segoeui.ttf",
+                r"C:\Windows\Fonts\msyh.ttc",
                 r"C:\Windows\Fonts\arial.ttf",
             ):
                 if os.path.exists(path):
                     return ImageFont.truetype(path, size)
             return ImageFont.load_default()
 
-        accent = (60, 220, 205, 255)
-        accent_dim = (29, 101, 112, 220)
-        amber = (245, 188, 72, 255)
-        bg = (9, 14, 20, 214)
-        panel = (14, 21, 29, 226)
-        panel_light = (28, 38, 48, 226)
-        text_main = (238, 244, 239, 255)
-        text_muted = (145, 164, 170, 255)
+        amber = (238, 184, 58, 255)
+        amber_soft = (168, 122, 28, 232)
+        cyan = (80, 220, 218, 255)
+        cyan_dim = (34, 114, 122, 205)
+        ink = (9, 12, 15, 226)
+        ink_2 = (16, 20, 24, 226)
+        glass = (26, 31, 36, 198)
+        glass_light = (39, 46, 52, 216)
+        line = (222, 230, 226, 90)
+        text_main = (245, 244, 233, 255)
+        text_muted = (163, 174, 173, 255)
 
         def text_center(draw, rect, text, text_font, fill=text_main):
             bbox = draw.textbbox((0, 0), text, font=text_font)
@@ -1093,48 +1102,64 @@ def write_runtime_ui_assets(output_directory: str):
         def save(image: Image.Image, file_name: str):
             image.save(os.path.join(ui_dir, file_name))
 
-        def rounded_asset(
-            file_name: str,
-            size: tuple[int, int],
-            text: str,
-            fill: tuple[int, int, int, int],
-            outline: tuple[int, int, int, int],
-            text_fill: tuple[int, int, int, int] = text_main,
-        ):
-            path = os.path.join(ui_dir, file_name)
+        def panel_rect(draw, rect, fill, outline=line, radius=16, width=2):
+            draw.rounded_rectangle(rect, radius=radius, fill=fill, outline=outline, width=width)
+            draw.line((rect[0] + 16, rect[1] + 8, rect[2] - 16, rect[1] + 8), fill=(255, 255, 255, 26), width=1)
+
+        def tab_asset(file_name: str, text: str, active: bool = False):
+            size = (260, 56)
             image = Image.new("RGBA", size, (0, 0, 0, 0))
             draw = ImageDraw.Draw(image)
-            radius = max(8, size[1] // 4)
-            draw.rounded_rectangle((2, 2, size[0] - 3, size[1] - 3), radius=radius, fill=fill, outline=outline, width=2)
-            draw.line((size[0] * 0.08, size[1] - 5, size[0] * 0.92, size[1] - 5), fill=(outline[0], outline[1], outline[2], 120), width=2)
-            text_center(draw, (0, 0, size[0], size[1]), text, font(max(14, int(size[1] * 0.34))), text_fill)
-            image.save(path)
+            fill = (40, 42, 40, 220) if active else (18, 22, 26, 210)
+            outline = amber if active else (132, 145, 143, 120)
+            panel_rect(draw, (2, 2, 258, 54), fill, outline, radius=10, width=2)
+            if active:
+                draw.rectangle((18, 47, 242, 51), fill=amber)
+            text_center(draw, (0, 0, size[0], size[1] - 2), text, font(20), text_main if active else text_muted)
+            save(image, file_name)
+
+        def button_asset(file_name: str, size: tuple[int, int], text: str, active: bool = False, list_row: bool = False):
+            image = Image.new("RGBA", size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(image)
+            fill = (98, 74, 22, 232) if active else glass_light
+            outline = amber if active else (150, 162, 158, 120)
+            panel_rect(draw, (2, 2, size[0] - 3, size[1] - 3), fill, outline, radius=14 if list_row else 12, width=2)
+            draw.rectangle((8, 12, 13, size[1] - 13), fill=amber if active else cyan_dim)
+            if list_row:
+                text_left(draw, (34, 18), text, font(24), text_main)
+                draw.line((size[0] - 86, 13, size[0] - 86, size[1] - 13), fill=(255, 255, 255, 52), width=1)
+            else:
+                text_center(draw, (12, 0, size[0], size[1]), text, font(22), text_main)
+            save(image, file_name)
 
         panel_bg = Image.new("RGBA", (1024, 756), (0, 0, 0, 0))
         draw = ImageDraw.Draw(panel_bg)
-        draw.rounded_rectangle((18, 18, 1006, 738), radius=28, fill=bg, outline=(134, 178, 188, 210), width=3)
-        draw.rounded_rectangle((30, 30, 994, 126), radius=20, fill=(12, 20, 28, 232), outline=(65, 120, 134, 210), width=2)
-        for x in range(72, 980, 72):
-            draw.line((x, 150, x, 716), fill=(41, 62, 72, 45), width=1)
-        for y in range(172, 712, 54):
-            draw.line((52, y, 972, y), fill=(41, 62, 72, 38), width=1)
-        draw.line((54, 142, 970, 142), fill=(accent[0], accent[1], accent[2], 125), width=2)
+        draw.rounded_rectangle((18, 18, 1006, 738), radius=22, fill=ink, outline=(228, 232, 224, 120), width=2)
+        draw.rounded_rectangle((30, 30, 994, 124), radius=18, fill=(20, 24, 28, 232), outline=(228, 232, 224, 78), width=1)
+        draw.polygon((742, 30, 994, 30, 994, 124, 704, 124), fill=(42, 45, 42, 170))
+        draw.polygon((918, 30, 994, 30, 994, 124, 878, 124), fill=(116, 85, 22, 148))
+        for x in range(-160, 1120, 86):
+            draw.line((x, 738, x + 330, 126), fill=(255, 255, 255, 18), width=1)
+        draw.line((52, 146, 972, 146), fill=amber, width=3)
+        draw.line((52, 151, 972, 151), fill=(255, 255, 255, 34), width=1)
+        draw.rectangle((52, 705, 300, 711), fill=amber_soft)
+        draw.rectangle((314, 705, 972, 708), fill=(255, 255, 255, 35))
         save(panel_bg, "panel_bg.dds")
 
         title = Image.new("RGBA", (360, 56), (0, 0, 0, 0))
         draw = ImageDraw.Draw(title)
-        draw.rounded_rectangle((1, 1, 358, 54), radius=18, fill=(9, 18, 25, 232), outline=accent, width=2)
-        draw.ellipse((17, 15, 42, 40), fill=(accent[0], accent[1], accent[2], 52), outline=accent, width=2)
-        draw.polygon((27, 21, 27, 34, 38, 27), fill=accent)
-        text_left(draw, (62, 13), "RX ANIM", font(25), text_main)
+        panel_rect(draw, (1, 1, 358, 54), (14, 18, 21, 238), cyan, radius=18, width=2)
+        draw.ellipse((18, 14, 43, 39), fill=(80, 220, 218, 40), outline=cyan, width=2)
+        draw.polygon((28, 20, 28, 34, 40, 27), fill=cyan)
+        text_left(draw, (64, 12), "RX MOTION", font(24), text_main)
         save(title, "title_badge.dds")
 
-        rounded_asset("tab_controls.dds", (260, 56), "PLAYER", panel, (75, 102, 116, 210), text_muted)
-        rounded_asset("tab_controls_active.dds", (260, 56), "PLAYER", (20, 54, 62, 234), accent, text_main)
-        rounded_asset("tab_hotkeys.dds", (260, 56), "HOTKEYS", panel, (75, 102, 116, 210), text_muted)
-        rounded_asset("tab_hotkeys_active.dds", (260, 56), "HOTKEYS", (20, 54, 62, 234), accent, text_main)
-        rounded_asset("tab_actions.dds", (260, 56), "ACTIONS", panel, (75, 102, 116, 210), text_muted)
-        rounded_asset("tab_actions_active.dds", (260, 56), "ACTIONS", (94, 72, 21, 238), amber, text_main)
+        tab_asset("tab_controls.dds", "PLAYER")
+        tab_asset("tab_controls_active.dds", "PLAYER", active=True)
+        tab_asset("tab_hotkeys.dds", "HOTKEYS")
+        tab_asset("tab_hotkeys_active.dds", "HOTKEYS", active=True)
+        tab_asset("tab_actions.dds", "ACTIONS")
+        tab_asset("tab_actions_active.dds", "ACTIONS", active=True)
 
         for file_name, hover_name, label in (
             ("btn_play.dds", "btn_play_hover.dds", "PLAY"),
@@ -1142,31 +1167,33 @@ def write_runtime_ui_assets(output_directory: str):
             ("btn_replay.dds", "btn_replay_hover.dds", "REPLAY"),
             ("btn_next_action.dds", "btn_next_action_hover.dds", "NEXT"),
             ("btn_speed.dds", "btn_speed_hover.dds", "SPEED"),
-            ("btn_action.dds", "btn_action_hover.dds", "ACTION"),
         ):
-            rounded_asset(file_name, (180, 72), label, panel_light, (78, 110, 122, 225), text_main)
-            rounded_asset(hover_name, (180, 72), label, (34, 72, 78, 238), accent, text_main)
+            button_asset(file_name, (180, 72), label)
+            button_asset(hover_name, (180, 72), label, active=True)
+        button_asset("btn_action.dds", (360, 72), "ACTION", list_row=True)
+        button_asset("btn_action_hover.dds", (360, 72), "ACTION", active=True, list_row=True)
 
         track = Image.new("RGBA", (1024, 56), (0, 0, 0, 0))
         draw = ImageDraw.Draw(track)
-        draw.rounded_rectangle((8, 18, 1016, 38), radius=10, fill=(8, 12, 17, 220), outline=(68, 91, 103, 210), width=2)
+        draw.rounded_rectangle((8, 18, 1016, 38), radius=10, fill=(11, 13, 14, 230), outline=(230, 235, 226, 90), width=2)
         save(track, "progress_track.dds")
 
         fill = Image.new("RGBA", (1024, 56), (0, 0, 0, 0))
         draw = ImageDraw.Draw(fill)
-        draw.rounded_rectangle((8, 18, 1016, 38), radius=10, fill=accent_dim, outline=accent, width=2)
+        draw.rounded_rectangle((8, 18, 1016, 38), radius=10, fill=amber_soft, outline=amber, width=2)
         save(fill, "progress_fill.dds")
 
         handle = Image.new("RGBA", (48, 48), (0, 0, 0, 0))
         draw = ImageDraw.Draw(handle)
-        draw.ellipse((7, 7, 41, 41), fill=(12, 22, 28, 245), outline=accent, width=3)
-        draw.ellipse((18, 18, 30, 30), fill=amber)
+        draw.rounded_rectangle((12, 5, 36, 43), radius=8, fill=(18, 20, 21, 245), outline=amber, width=3)
+        draw.rectangle((21, 12, 27, 36), fill=cyan)
         save(handle, "progress_handle.dds")
 
         watermark = Image.new("RGBA", (1024, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(watermark)
-        draw.line((210, 32, 814, 32), fill=(76, 104, 116, 110), width=1)
-        text_center(draw, (0, 0, 1024, 64), "RX LOCAL ANIMATION BANK", font(24), (151, 171, 176, 210))
+        draw.line((92, 32, 812, 32), fill=(255, 255, 255, 48), width=1)
+        draw.rectangle((820, 26, 930, 38), fill=amber_soft)
+        text_left(draw, (96, 18), "LOCAL ANIMATION CONTROL", font(22), (194, 202, 198, 210))
         save(watermark, "watermark_patreon.dds")
 
         digits = Image.new("RGBA", (624, 64), (0, 0, 0, 0))
@@ -1180,13 +1207,14 @@ def write_runtime_ui_assets(output_directory: str):
         def page_asset(file_name: str, title_text: str, lines: tuple[str, ...]):
             page = Image.new("RGBA", (940, 400), (0, 0, 0, 0))
             draw = ImageDraw.Draw(page)
-            draw.rounded_rectangle((1, 1, 938, 398), radius=28, fill=(7, 13, 18, 184), outline=(64, 94, 106, 180), width=2)
-            draw.line((34, 72, 906, 72), fill=(60, 220, 205, 118), width=2)
-            text_left(draw, (36, 24), title_text, font(34), text_main)
-            y = 98
+            panel_rect(draw, (1, 1, 938, 398), (11, 14, 16, 176), (236, 236, 226, 76), radius=20, width=1)
+            draw.rectangle((1, 1, 938, 58), fill=(26, 29, 30, 132))
+            draw.rectangle((28, 58, 912, 62), fill=amber_soft if file_name == "actions_page.dds" else cyan_dim)
+            text_left(draw, (34, 18), title_text, font(28), text_main)
+            y = 86
             for line in lines:
-                text_left(draw, (44, y), line, font(24), text_muted)
-                y += 39
+                text_left(draw, (44, y), line, font(22), text_muted)
+                y += 36
             save(page, file_name)
 
         page_asset(
@@ -1202,15 +1230,23 @@ def write_runtime_ui_assets(output_directory: str):
                 "Drag progress bar     Seek",
             ),
         )
-        page_asset(
-            "actions_page.dds",
-            "Actions",
-            (
-                "Choose an exported action clip.",
-                "Current build shows only clips available in the manifest.",
-                "Next Action cycles through the same shared playback state.",
-            ),
-        )
+        actions = Image.new("RGBA", (940, 400), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(actions)
+        panel_rect(draw, (1, 1, 938, 398), (11, 14, 16, 176), (236, 236, 226, 76), radius=20, width=1)
+        draw.rectangle((1, 1, 938, 58), fill=(26, 29, 30, 132))
+        draw.rectangle((28, 58, 912, 62), fill=amber_soft)
+        text_left(draw, (34, 18), "Actions", font(28), text_main)
+        panel_rect(draw, (30, 86, 418, 354), (18, 23, 26, 160), (255, 255, 255, 54), radius=14, width=1)
+        panel_rect(draw, (448, 86, 906, 354), (18, 23, 26, 132), (255, 255, 255, 42), radius=14, width=1)
+        draw.rectangle((50, 106, 150, 111), fill=amber)
+        draw.rectangle((472, 106, 570, 111), fill=cyan)
+        text_left(draw, (472, 122), "CLIP DETAIL", font(22), text_main)
+        text_left(draw, (472, 158), "Shared timeline: bone / morph / UI", font(20), text_muted)
+        text_left(draw, (472, 194), "Next Action cycles exported clips.", font(20), text_muted)
+        text_left(draw, (472, 230), "Replay returns to the loop start.", font(20), text_muted)
+        draw.line((472, 292, 860, 292), fill=(255, 255, 255, 36), width=1)
+        text_left(draw, (472, 312), "No clip thumbnails yet. Kept clean on purpose.", font(18), (134, 145, 145, 210))
+        save(actions, "actions_page.dds")
         generated = True
     except Exception:
         generated = False

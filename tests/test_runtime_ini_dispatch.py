@@ -174,7 +174,10 @@ class RuntimeIniDispatchTests(unittest.TestCase):
 
         ui_ini = runtime_ini.build_runtime_ui_ini({"clips": {"idle": {}, "wave": {}}}, "idle")
 
-        self.assertIn("local $action_y0 = $button_y + 0.060", ui_ini)
+        self.assertIn("local $panel_h = 0.38", ui_ini)
+        self.assertIn("local $action_button_w = $inner_w * 0.33", ui_ini)
+        self.assertIn("local $action_y0 = $rx_ui_y + 0.142", ui_ini)
+        self.assertIn("local $action_y3 = $action_y2 + $action_button_h + $action_gap", ui_ini)
         self.assertIn("w87 = $rx_ui_y + 0.095", ui_ini)
         self.assertIn("ps-t100 = ResourceRXActionPage", ui_ini)
 
