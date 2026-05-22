@@ -1063,7 +1063,7 @@ def write_runtime_ui_assets(output_directory: str):
     os.makedirs(ui_dir, exist_ok=True)
     generated = False
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
         def font(size: int):
             for path in (
@@ -1078,17 +1078,17 @@ def write_runtime_ui_assets(output_directory: str):
                     return ImageFont.truetype(path, size)
             return ImageFont.load_default()
 
-        amber = (238, 184, 58, 255)
-        amber_soft = (168, 122, 28, 232)
-        cyan = (80, 220, 218, 255)
-        cyan_dim = (34, 114, 122, 205)
-        ink = (9, 12, 15, 226)
-        ink_2 = (16, 20, 24, 226)
-        glass = (26, 31, 36, 198)
-        glass_light = (39, 46, 52, 216)
-        line = (222, 230, 226, 90)
-        text_main = (245, 244, 233, 255)
-        text_muted = (163, 174, 173, 255)
+        neon_blue = (72, 236, 255, 255)
+        neon_purple = (132, 86, 255, 255)
+        neon_pink = (255, 82, 218, 255)
+        neon_gold = (255, 206, 82, 255)
+        neon_stops = (neon_blue, neon_purple, neon_pink, neon_gold, neon_blue)
+        amber_soft = (214, 146, 40, 205)
+        cyan = neon_blue
+        cyan_dim = (36, 136, 168, 205)
+        glass_light = (26, 30, 45, 190)
+        text_main = (250, 250, 255, 255)
+        text_muted = (182, 190, 216, 235)
 
         def text_center(draw, rect, text, text_font, fill=text_main):
             bbox = draw.textbbox((0, 0), text, font=text_font)
@@ -1102,55 +1102,171 @@ def write_runtime_ui_assets(output_directory: str):
         def save(image: Image.Image, file_name: str):
             image.save(os.path.join(ui_dir, file_name))
 
-        def panel_rect(draw, rect, fill, outline=line, radius=16, width=2):
-            draw.rounded_rectangle(rect, radius=radius, fill=fill, outline=outline, width=width)
-            draw.line((rect[0] + 16, rect[1] + 8, rect[2] - 16, rect[1] + 8), fill=(255, 255, 255, 26), width=1)
+        def lerp_channel(a: int, b: int, t: float) -> int:
+            return int(a + (b - a) * t)
+
+        def lerp_color(a: tuple[int, int, int, int], b: tuple[int, int, int, int], t: float) -> tuple[int, int, int, int]:
+            return (
+                lerp_channel(a[0], b[0], t),
+                lerp_channel(a[1], b[1], t),
+                lerp_channel(a[2], b[2], t),
+                lerp_channel(a[3], b[3], t),
+            )
+
+        def spectrum_color(t: float) -> tuple[int, int, int, int]:
+            t = t % 1.0
+            scaled = t * (len(neon_stops) - 1)
+            index = min(int(scaled), len(neon_stops) - 2)
+            return lerp_color(neon_stops[index], neon_stops[index + 1], scaled - index)
+
+        def neon_gradient(size: tuple[int, int], offset: float = 0.0) -> Image.Image:
+            width, height = size
+            image = Image.new("RGBA", size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(image)
+            denom = max(width + height, 1)
+            for x in range(width):
+                color = spectrum_color((x + height * 0.35) / denom + offset)
+                draw.line((x, 0, x, height), fill=color)
+            return image
+
+        def rounded_mask(size: tuple[int, int], rect: tuple[int, int, int, int], radius: int) -> Image.Image:
+            mask = Image.new("L", size, 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.rounded_rectangle(rect, radius=radius, fill=255)
+            return mask
+
+        def neon_card(
+            size: tuple[int, int],
+            fill: tuple[int, int, int, int],
+            radius: int = 22,
+            border: int = 4,
+            glow: int = 16,
+            offset: float = 0.0,
+            shine: bool = True,
+        ) -> Image.Image:
+            width, height = size
+            margin = max(glow + border, 8)
+            outer_rect = (margin, margin, width - margin - 1, height - margin - 1)
+            inner_rect = (
+                margin + border,
+                margin + border,
+                width - margin - border - 1,
+                height - margin - border - 1,
+            )
+            outer = rounded_mask(size, outer_rect, radius)
+            inner = rounded_mask(size, inner_rect, max(radius - border, 1))
+            border_mask = ImageChops.subtract(outer, inner)
+            gradient = neon_gradient(size, offset)
+
+            image = Image.new("RGBA", size, (0, 0, 0, 0))
+            for blur, alpha_scale in ((glow, 0.34), (max(glow // 2, 1), 0.50), (max(glow // 4, 1), 0.78)):
+                glow_mask = border_mask.filter(ImageFilter.GaussianBlur(blur))
+                glow_mask = glow_mask.point(lambda value, scale=alpha_scale: int(value * scale))
+                glow_layer = gradient.copy()
+                glow_layer.putalpha(glow_mask)
+                image.alpha_composite(glow_layer)
+
+            fill_layer = Image.new("RGBA", size, (0, 0, 0, 0))
+            fill_draw = ImageDraw.Draw(fill_layer)
+            fill_draw.rounded_rectangle(inner_rect, radius=max(radius - border, 1), fill=fill)
+            if shine:
+                fill_draw.rounded_rectangle(
+                    (inner_rect[0] + 8, inner_rect[1] + 8, inner_rect[2] - 8, inner_rect[1] + max(10, height // 6)),
+                    radius=max(radius // 2, 1),
+                    fill=(255, 255, 255, 18),
+                )
+            image.alpha_composite(fill_layer)
+
+            border_layer = gradient.copy()
+            border_layer.putalpha(border_mask)
+            image.alpha_composite(border_layer)
+
+            detail = ImageDraw.Draw(image)
+            for dash in range(0, width, 84):
+                x0 = dash + int((width * offset) % 84)
+                detail.line(
+                    (x0, margin + 2, min(x0 + 34, width - margin - 2), margin + 2),
+                    fill=(255, 255, 255, 130),
+                    width=1,
+                )
+            return image
+
+        def paste_neon_card(
+            base: Image.Image,
+            xy: tuple[int, int],
+            size: tuple[int, int],
+            fill: tuple[int, int, int, int],
+            radius: int = 20,
+            border: int = 3,
+            glow: int = 10,
+            offset: float = 0.0,
+        ):
+            base.alpha_composite(neon_card(size, fill, radius=radius, border=border, glow=glow, offset=offset), xy)
 
         def tab_asset(file_name: str, text: str, active: bool = False):
             size = (260, 56)
-            image = Image.new("RGBA", size, (0, 0, 0, 0))
+            image = neon_card(
+                size,
+                (18, 20, 38, 210) if active else (10, 13, 28, 184),
+                radius=17,
+                border=3,
+                glow=7 if active else 5,
+                offset=0.14 if active else 0.02,
+            )
             draw = ImageDraw.Draw(image)
-            fill = (40, 42, 40, 220) if active else (18, 22, 26, 210)
-            outline = amber if active else (132, 145, 143, 120)
-            panel_rect(draw, (2, 2, 258, 54), fill, outline, radius=10, width=2)
             if active:
-                draw.rectangle((18, 47, 242, 51), fill=amber)
+                draw.rounded_rectangle((38, 45, 222, 49), radius=2, fill=neon_gold)
             text_center(draw, (0, 0, size[0], size[1] - 2), text, font(20), text_main if active else text_muted)
             save(image, file_name)
 
         def button_asset(file_name: str, size: tuple[int, int], text: str, active: bool = False, list_row: bool = False):
-            image = Image.new("RGBA", size, (0, 0, 0, 0))
+            image = neon_card(
+                size,
+                (35, 22, 52, 210) if active else glass_light,
+                radius=18 if list_row else 15,
+                border=3,
+                glow=9 if active else 6,
+                offset=0.42 if active else 0.18,
+            )
             draw = ImageDraw.Draw(image)
-            fill = (98, 74, 22, 232) if active else glass_light
-            outline = amber if active else (150, 162, 158, 120)
-            panel_rect(draw, (2, 2, size[0] - 3, size[1] - 3), fill, outline, radius=14 if list_row else 12, width=2)
-            draw.rectangle((8, 12, 13, size[1] - 13), fill=amber if active else cyan_dim)
+            draw.rounded_rectangle(
+                (20, 18, 27, size[1] - 19),
+                radius=3,
+                fill=neon_gold if active else cyan_dim,
+            )
             if list_row:
-                text_left(draw, (34, 18), text, font(24), text_main)
-                draw.line((size[0] - 86, 13, size[0] - 86, size[1] - 13), fill=(255, 255, 255, 52), width=1)
+                text_left(draw, (48, 18), text, font(24), text_main)
+                draw.line((size[0] - 88, 18, size[0] - 88, size[1] - 19), fill=(255, 255, 255, 42), width=1)
             else:
                 text_center(draw, (12, 0, size[0], size[1]), text, font(22), text_main)
             save(image, file_name)
 
-        panel_bg = Image.new("RGBA", (1024, 756), (0, 0, 0, 0))
+        panel_bg = neon_card((1024, 756), fill=(8, 10, 24, 208), radius=34, border=5, glow=24, offset=0.08)
         draw = ImageDraw.Draw(panel_bg)
-        draw.rounded_rectangle((18, 18, 1006, 738), radius=22, fill=ink, outline=(228, 232, 224, 120), width=2)
-        draw.rounded_rectangle((30, 30, 994, 124), radius=18, fill=(20, 24, 28, 232), outline=(228, 232, 224, 78), width=1)
-        draw.polygon((742, 30, 994, 30, 994, 124, 704, 124), fill=(42, 45, 42, 170))
-        draw.polygon((918, 30, 994, 30, 994, 124, 878, 124), fill=(116, 85, 22, 148))
-        for x in range(-160, 1120, 86):
-            draw.line((x, 738, x + 330, 126), fill=(255, 255, 255, 18), width=1)
-        draw.line((52, 146, 972, 146), fill=amber, width=3)
-        draw.line((52, 151, 972, 151), fill=(255, 255, 255, 34), width=1)
-        draw.rectangle((52, 705, 300, 711), fill=amber_soft)
-        draw.rectangle((314, 705, 972, 708), fill=(255, 255, 255, 35))
+        for center, color, radius in (
+            ((190, 110), (80, 220, 255, 34), 150),
+            ((760, 90), (255, 82, 218, 28), 210),
+            ((874, 650), (255, 206, 82, 22), 180),
+        ):
+            orb = Image.new("RGBA", (1024, 756), (0, 0, 0, 0))
+            orb_draw = ImageDraw.Draw(orb)
+            orb_draw.ellipse(
+                (center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius),
+                fill=color,
+            )
+            panel_bg.alpha_composite(orb.filter(ImageFilter.GaussianBlur(radius // 2)))
+        draw = ImageDraw.Draw(panel_bg)
+        draw.rounded_rectangle((46, 44, 978, 126), radius=22, fill=(12, 15, 34, 130), outline=(255, 255, 255, 34), width=1)
+        draw.line((58, 148, 966, 148), fill=neon_blue, width=1)
+        draw.line((58, 152, 966, 152), fill=neon_pink, width=1)
+        draw.rectangle((64, 704, 310, 710), fill=(255, 206, 82, 155))
+        draw.rectangle((326, 704, 958, 707), fill=(135, 86, 255, 110))
         save(panel_bg, "panel_bg.dds")
 
-        title = Image.new("RGBA", (360, 56), (0, 0, 0, 0))
+        title = neon_card((360, 56), (10, 14, 36, 210), radius=19, border=3, glow=8, offset=0.00)
         draw = ImageDraw.Draw(title)
-        panel_rect(draw, (1, 1, 358, 54), (14, 18, 21, 238), cyan, radius=18, width=2)
-        draw.ellipse((18, 14, 43, 39), fill=(80, 220, 218, 40), outline=cyan, width=2)
-        draw.polygon((28, 20, 28, 34, 40, 27), fill=cyan)
+        draw.ellipse((23, 14, 48, 39), fill=(80, 220, 218, 44), outline=cyan, width=2)
+        draw.polygon((33, 20, 33, 34, 45, 27), fill=cyan)
         text_left(draw, (64, 12), "RX MOTION", font(24), text_main)
         save(title, "title_badge.dds")
 
@@ -1173,27 +1289,31 @@ def write_runtime_ui_assets(output_directory: str):
         button_asset("btn_action.dds", (360, 72), "ACTION", list_row=True)
         button_asset("btn_action_hover.dds", (360, 72), "ACTION", active=True, list_row=True)
 
-        track = Image.new("RGBA", (1024, 56), (0, 0, 0, 0))
+        track = neon_card((1024, 56), (8, 10, 22, 210), radius=18, border=2, glow=6, offset=0.25, shine=False)
         draw = ImageDraw.Draw(track)
-        draw.rounded_rectangle((8, 18, 1016, 38), radius=10, fill=(11, 13, 14, 230), outline=(230, 235, 226, 90), width=2)
+        draw.rounded_rectangle((38, 24, 986, 32), radius=4, fill=(255, 255, 255, 42))
         save(track, "progress_track.dds")
 
         fill = Image.new("RGBA", (1024, 56), (0, 0, 0, 0))
         draw = ImageDraw.Draw(fill)
-        draw.rounded_rectangle((8, 18, 1016, 38), radius=10, fill=amber_soft, outline=amber, width=2)
+        fill_gradient = neon_gradient((1024, 56), 0.30)
+        fill_mask = Image.new("L", (1024, 56), 0)
+        fill_mask_draw = ImageDraw.Draw(fill_mask)
+        fill_mask_draw.rounded_rectangle((38, 20, 986, 36), radius=8, fill=255)
+        fill = fill_gradient
+        fill.putalpha(fill_mask)
         save(fill, "progress_fill.dds")
 
-        handle = Image.new("RGBA", (48, 48), (0, 0, 0, 0))
+        handle = neon_card((48, 48), (18, 12, 34, 230), radius=16, border=3, glow=7, offset=0.46, shine=False)
         draw = ImageDraw.Draw(handle)
-        draw.rounded_rectangle((12, 5, 36, 43), radius=8, fill=(18, 20, 21, 245), outline=amber, width=3)
-        draw.rectangle((21, 12, 27, 36), fill=cyan)
+        draw.rectangle((21, 13, 27, 35), fill=neon_gold)
         save(handle, "progress_handle.dds")
 
         watermark = Image.new("RGBA", (1024, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(watermark)
-        draw.line((92, 32, 812, 32), fill=(255, 255, 255, 48), width=1)
-        draw.rectangle((820, 26, 930, 38), fill=amber_soft)
-        text_left(draw, (96, 18), "LOCAL ANIMATION CONTROL", font(22), (194, 202, 198, 210))
+        draw.line((92, 32, 812, 32), fill=(190, 220, 255, 54), width=1)
+        draw.rectangle((820, 26, 930, 38), fill=(255, 82, 218, 108))
+        text_left(draw, (96, 18), "LOCAL ANIMATION CONTROL", font(22), (214, 222, 246, 220))
         save(watermark, "watermark_patreon.dds")
 
         digits = Image.new("RGBA", (624, 64), (0, 0, 0, 0))
@@ -1205,11 +1325,10 @@ def write_runtime_ui_assets(output_directory: str):
         save(digits, "digits_atlas.dds")
 
         def page_asset(file_name: str, title_text: str, lines: tuple[str, ...]):
-            page = Image.new("RGBA", (940, 400), (0, 0, 0, 0))
+            page = neon_card((940, 400), (8, 11, 28, 166), radius=26, border=3, glow=12, offset=0.14)
             draw = ImageDraw.Draw(page)
-            panel_rect(draw, (1, 1, 938, 398), (11, 14, 16, 176), (236, 236, 226, 76), radius=20, width=1)
-            draw.rectangle((1, 1, 938, 58), fill=(26, 29, 30, 132))
-            draw.rectangle((28, 58, 912, 62), fill=amber_soft if file_name == "actions_page.dds" else cyan_dim)
+            draw.rounded_rectangle((42, 42, 898, 82), radius=13, fill=(255, 255, 255, 18))
+            draw.rectangle((52, 86, 888, 90), fill=amber_soft if file_name == "actions_page.dds" else cyan_dim)
             text_left(draw, (34, 18), title_text, font(28), text_main)
             y = 86
             for line in lines:
@@ -1230,16 +1349,16 @@ def write_runtime_ui_assets(output_directory: str):
                 "Drag progress bar     Seek",
             ),
         )
-        actions = Image.new("RGBA", (940, 400), (0, 0, 0, 0))
+        actions = neon_card((940, 400), (8, 11, 28, 166), radius=26, border=3, glow=12, offset=0.32)
         draw = ImageDraw.Draw(actions)
-        panel_rect(draw, (1, 1, 938, 398), (11, 14, 16, 176), (236, 236, 226, 76), radius=20, width=1)
-        draw.rectangle((1, 1, 938, 58), fill=(26, 29, 30, 132))
-        draw.rectangle((28, 58, 912, 62), fill=amber_soft)
+        draw.rounded_rectangle((42, 42, 898, 82), radius=13, fill=(255, 255, 255, 18))
+        draw.rectangle((52, 86, 888, 90), fill=amber_soft)
         text_left(draw, (34, 18), "Actions", font(28), text_main)
-        panel_rect(draw, (30, 86, 418, 354), (18, 23, 26, 160), (255, 255, 255, 54), radius=14, width=1)
-        panel_rect(draw, (448, 86, 906, 354), (18, 23, 26, 132), (255, 255, 255, 42), radius=14, width=1)
-        draw.rectangle((50, 106, 150, 111), fill=amber)
-        draw.rectangle((472, 106, 570, 111), fill=cyan)
+        paste_neon_card(actions, (30, 88), (388, 268), (10, 13, 30, 118), radius=18, border=2, glow=8, offset=0.10)
+        paste_neon_card(actions, (448, 88), (458, 268), (10, 13, 30, 106), radius=18, border=2, glow=8, offset=0.48)
+        draw = ImageDraw.Draw(actions)
+        draw.rectangle((52, 112, 154, 116), fill=neon_gold)
+        draw.rectangle((472, 112, 570, 116), fill=cyan)
         text_left(draw, (472, 122), "CLIP DETAIL", font(22), text_main)
         text_left(draw, (472, 158), "Shared timeline: bone / morph / UI", font(20), text_muted)
         text_left(draw, (472, 194), "Next Action cycles exported clips.", font(20), text_muted)
