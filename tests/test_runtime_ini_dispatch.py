@@ -105,7 +105,7 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
 
         self.assertIn("def _clip_default_ticks_per_sample", source)
-        self.assertIn("_append_constants(lines, _clip_default_ticks_per_sample(manifest, clip_name))", source)
+        self.assertIn("_append_constants(lines, _clip_default_ticks_per_sample(manifest, clip_name), _clip_count(manifest))", source)
         self.assertIn('global persist $rx_anim_speed = {speed}', source)
         self.assertIn('global persist $rx_anim_speed_default = {speed}', source)
         self.assertIn('if $rx_anim_speed_default != {speed}', source)
@@ -119,6 +119,38 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn('"update_rx_panel_state_cs.hlsl"', source)
         self.assertIn('"panel_sprite.hlsl"', source)
         self.assertIn('"panel_digits.hlsl"', source)
+
+    def test_runtime_present_forwards_action_index_to_master_playback(self):
+        source = RUNTIME_INI_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("global persist $rx_anim_action_index = 0", source)
+        self.assertIn("global $rx_anim_action_count = {action_count}", source)
+        self.assertIn('_line(lines, "z1 = $rx_anim_action_index")', source)
+        self.assertIn('_line(lines, "w1 = $rx_anim_action_count")', source)
+        self.assertIn("uint requested_clip_index = (uint)max(control1.z, 0.0);", source)
+        self.assertIn("uint clip_count = max((uint)max(control1.w, 1.0), 1u);", source)
+        self.assertIn("MasterPlayback[2] = uint4(seek_active, last_control_token, active_clip_index, queued_clip_index);", source)
+
+    def test_runtime_ui_has_player_hotkey_and_action_tabs(self):
+        runtime_ini = _load_runtime_ini_module()
+        manifest = {
+            "clips": {
+                "idle": {"default_ticks_per_sample": 4},
+                "wave": {"default_ticks_per_sample": 4},
+                "blink": {"default_ticks_per_sample": 4},
+            }
+        }
+
+        ui_ini = runtime_ini.build_runtime_ui_ini(manifest, "idle")
+
+        self.assertIn("[CommandListRXNextAction]", ui_ini)
+        self.assertIn("[ResourceRXTabActions]", ui_ini)
+        self.assertIn("[ResourceRXActionPage]", ui_ini)
+        self.assertIn("elif $rx_ui_hover == 4\n    $rx_ui_tab = 2", ui_ini)
+        self.assertIn("run = CommandListRXSelectAction0", ui_ini)
+        self.assertIn("run = CommandListRXSelectAction1", ui_ini)
+        self.assertIn("run = CommandListRXSelectAction2", ui_ini)
+        self.assertNotIn("run = CommandListRXSelectAction4", ui_ini)
 
     def test_export_buttons_forward_ticks_per_sample_setting(self):
         source = OPERATORS_SOURCE.read_text(encoding="utf-8")
