@@ -13,14 +13,14 @@ IB 集合里的可见网格，就是运行时包真正绘制的网格。
 Create/Sync RX Collections
 -> put visible meshes under IB collections
 -> choose Export Type
--> optionally export geometry
+-> optionally export mesh buffers
 -> Export
 ```
 
 | Term / 术语 | Meaning / 含义 |
 | --- | --- |
 | IB Collection / IB 集合 | One child collection named `<hash>-<match_index_count>-<first_index>`. It is one runtime DrawPart context. / 一个命名为 `<hash>-<match_index_count>-<first_index>` 的子集合，对应一个运行时 DrawPart。 |
-| Visible Source Mesh / 可见源网格 | The mesh the user actually wants to export and see in Blender. Geometry, UVs, normals, tangents, shape keys, and INI draw comments come from it. / 用户真正想导出的网格。几何、UV、法线、切线、形态键和 ini 绘制注释都以它为准。 |
+| Visible Source Mesh / 可见源网格 | The mesh the user actually wants to export and see in Blender. Mesh buffers, UVs, normals, tangents, shape keys, and INI draw comments come from it. / 用户真正想导出的网格。Mesh 缓冲、UV、法线、切线、形态键和 ini 绘制注释都以它为准。 |
 | Slot Adapter / 槽位适配器 | Optional helper mesh used only to supply game-compatible numeric vertex groups for final `vb2`. It should not remain as the visible export object. / 可选辅助网格，只负责提供游戏可识别的数字顶点组来写最终 `vb2`，不应作为用户可见导出物体保留。 |
 | Draw Segment / 绘制段 | One mesh draw range in the generated INI. The line before `drawindexedinstanced` must name the visible source mesh. / 生成 ini 中的一段 draw。`drawindexedinstanced` 前一行必须注释可见源网格名。 |
 
@@ -34,7 +34,7 @@ Create/Sync RX Collections
 | RX Export Collection / RX 导出集合 | Root collection whose children are IB Collections. / 根集合，其子集合是各个 IB 集合。 |
 | Create/Sync RX Collections / 创建/同步 RX 集合 | Create the root and IB collections from the current manifest or selected targets. / 从当前清单或选择目标创建根集合与 IB 集合。 |
 | Export Type / 导出类型 | `Full RX Package`, `Bone Payload Only`, `Morph Payload Only`, or `INI Only`. / 完整包、仅骨骼、仅形态键或仅 ini。 |
-| Export Geometry / 导出几何 | Default enabled. Refresh geometry when the chosen export needs draw buffers. / 默认开启。导出类型需要绘制缓冲时刷新几何。 |
+| Export Mesh / 导出 Mesh | Default enabled. Refresh mesh buffers when the chosen export needs draw buffers. / 默认开启。导出类型需要绘制缓冲时刷新 Mesh 缓冲。 |
 
 ## UV And Coordinates / UV 与坐标
 
@@ -65,7 +65,7 @@ Rules / 规则：
 - If an exported mesh needs numeric game groups, use a Slot Adapter internally or through advanced settings. / 如果导出网格需要数字游戏顶点组，用 Slot Adapter 在内部或高级设置中适配。
 - The visible mesh remains the morph source and INI draw identity. / 可见网格仍然是形态键来源和 ini draw 身份。
 - Explicit `partNN` child collections are allowed, but do not mix direct meshes and explicit `partNN` children in the same IB Collection. / 可以使用显式 `partNN` 子集合，但同一 IB 集合中不要混用直接网格和显式 `partNN`。
-- If any geometry is exported for an IB Collection, the original game draw is skipped. / 如果某个 IB 集合导出了几何，该 IB 的原始游戏 draw 会被跳过。
+- If any mesh buffers are exported for an IB Collection, the original game draw is skipped. / 如果某个 IB 集合导出了 Mesh 缓冲，该 IB 的原始游戏 draw 会被跳过。
 
 ## Current RX Validation Scene / 当前 RX 验证场景
 

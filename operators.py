@@ -349,9 +349,9 @@ class BI_OT_export_rx_package(bpy.types.Operator):
             f"runtime_step={ticks_per_sample} present(s)",
         ]
         if bool(getattr(scene, "bi_rx_export_geometry", True)):
-            messages.append("geometry=enabled")
+            messages.append("mesh=enabled")
         else:
-            messages.append("geometry=reuse")
+            messages.append("mesh=reuse")
         if bone_result is not None:
             messages.append(
                 f"bone parts={bone_result.exported_armatures}/{bone_result.selected_armatures}"

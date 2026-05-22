@@ -299,29 +299,29 @@ class RuntimeIniDispatchTests(unittest.TestCase):
         self.assertIn("[ResourceMorphBaseVB_2009f0d6_1356_0]\ntype = Buffer\nstride = 40", ini)
         self.assertIn("cs-t0 = ResourceMorphBaseVB_e78c7068_10590_0_SRV", ini)
         self.assertIn("cs-u5 = copy ResourceMorphBaseVB_e78c7068_10590_0", ini)
-        self.assertIn("ResourceGeometry_e78c7068_10590_0_part00_vb0 = ref cs-u5", ini)
+        self.assertIn("ResourceMesh_e78c7068_10590_0_part00_vb0 = ref cs-u5", ini)
         self.assertIn(
             "cs-u5 = copy ResourceMorphBaseVB_e78c7068_10590_0\n"
-            "ResourceGeometry_e78c7068_10590_0_part00_vb0 = ref cs-u5\n"
+            "ResourceMesh_e78c7068_10590_0_part00_vb0 = ref cs-u5\n"
             "run = CustomShader_ApplyMorph",
             ini,
         )
         self.assertIn("cs-t0 = ResourceMorphBaseVB_2009f0d6_1356_0_SRV", ini)
         self.assertIn("cs-u5 = copy ResourceMorphBaseVB_2009f0d6_1356_0", ini)
-        self.assertIn("ResourceGeometry_2009f0d6_1356_0_part00_vb0 = ref cs-u5", ini)
+        self.assertIn("ResourceMesh_2009f0d6_1356_0_part00_vb0 = ref cs-u5", ini)
         self.assertIn(
             "cs-u5 = copy ResourceMorphBaseVB_2009f0d6_1356_0\n"
-            "ResourceGeometry_2009f0d6_1356_0_part00_vb0 = ref cs-u5\n"
+            "ResourceMesh_2009f0d6_1356_0_part00_vb0 = ref cs-u5\n"
             "run = CustomShader_ApplyMorph_PNTA40",
             ini,
         )
         self.assertIn("[CustomShader_ApplyMorph]\ncs = hlsl\\apply_morph_to_vb_cs.hlsl\ncs-t3 = ResourceMasterPlayback_SRV\ndispatch = 166, 1, 1", ini)
         self.assertIn("[CustomShader_ApplyMorph_PNTA40]\ncs = hlsl\\apply_morph_to_vb_pnta40_cs.hlsl\ncs-t3 = ResourceMasterPlayback_SRV\ndispatch = 22, 1, 1", ini)
         self.assertIn("run = CustomShader_UpdateBonePaletteTQ", ini)
-        self.assertIn("vb0 = ref ResourceGeometry_e78c7068_10590_0_part00_vb0", ini)
-        self.assertIn("vb3 = ref ResourceGeometry_e78c7068_10590_0_part00_vb0", ini)
-        self.assertIn("vb0 = ref ResourceGeometry_2009f0d6_1356_0_part00_vb0", ini)
-        self.assertIn("vb3 = ref ResourceGeometry_2009f0d6_1356_0_part00_vb3", ini)
+        self.assertIn("vb0 = ref ResourceMesh_e78c7068_10590_0_part00_vb0", ini)
+        self.assertIn("vb3 = ref ResourceMesh_e78c7068_10590_0_part00_vb0", ini)
+        self.assertIn("vb0 = ref ResourceMesh_2009f0d6_1356_0_part00_vb0", ini)
+        self.assertIn("vb3 = ref ResourceMesh_2009f0d6_1356_0_part00_vb3", ini)
         self.assertIn("; draw segment: 005_睫眉", ini)
         self.assertIn(
             "; draw segment: 005_睫眉\n"

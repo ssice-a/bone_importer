@@ -291,9 +291,9 @@ def register_addon_properties():
         description="Explicit armature used for Final Skin = Own. Leave empty to infer from the mesh armature modifier.",
     )
     bpy.types.Object.bi_force_replace_geometry = bpy.props.BoolProperty(
-        name="Force Geometry",
+        name="Force Mesh",
         default=False,
-        description="Force this mesh to export replacement geometry even when route analysis would otherwise keep the original draw.",
+        description="Force this object to export replacement mesh buffers even when route analysis would otherwise keep the original draw.",
     )
     bpy.types.Object.bi_preskin_bone_enabled = bpy.props.BoolProperty(
         name="Pre-Skin Bone",
@@ -378,7 +378,7 @@ def register_addon_properties():
         default="",
         subtype="FILE_PATH",
         description=(
-            "Path to the capture_manifest.json that provides the game vertex layout table used by RX geometry export."
+            "Path to the capture_manifest.json that provides the game vertex layout table used by RX mesh export."
         ),
     )
     bpy.types.Scene.bi_animation_output_dir = bpy.props.StringProperty(
@@ -441,7 +441,7 @@ def register_addon_properties():
     bpy.types.Scene.bi_rx_export_type = bpy.props.EnumProperty(
         name="Export Type",
         items=[
-            ("FULL", "Full RX Package / 完整 RX 包", "Export bone/morph payloads, optional geometry, manifest, INI, and HLSL"),
+            ("FULL", "Full RX Package / 完整 RX 包", "Export bone/morph payloads, optional mesh buffers, manifest, INI, and HLSL"),
             ("BONE", "Bone Payload Only / 仅骨骼数据", "Update bone animation buffers and related manifest entries"),
             ("MORPH", "Morph Payload Only / 仅形态键数据", "Update morph buffers and related manifest entries"),
             ("INI", "INI Only / 仅 INI", "Regenerate executable INI/HLSL from the existing Runtime Manifest"),
@@ -450,11 +450,11 @@ def register_addon_properties():
         description="Single RX v3 export entry. The dropdown chooses what this run refreshes.",
     )
     bpy.types.Scene.bi_rx_export_geometry = bpy.props.BoolProperty(
-        name="Export Geometry",
+        name="Export Mesh",
         default=True,
         description=(
-            "Export or refresh required RX geometry buffers when the selected export type can produce geometry. "
-            "Disable only when existing manifest geometry should be reused."
+            "Export or refresh required RX mesh buffers when the selected export type can produce draw geometry. "
+            "Disable only when existing manifest mesh buffers should be reused."
         ),
     )
     bpy.types.Scene.bi_rx_source_fps = bpy.props.FloatProperty(
@@ -488,17 +488,17 @@ def register_addon_properties():
     bpy.types.Scene.bi_export_mirror_x = bpy.props.BoolProperty(
         name="Default Export Mirror X",
         default=True,
-        description="Default X mirror setting used by RX geometry export when an object has no explicit override.",
+        description="Default X mirror setting used by RX mesh export when an object has no explicit override.",
     )
     bpy.types.Scene.bi_export_uv_mirror_u = bpy.props.BoolProperty(
         name="Default Export UV Mirror U",
         default=False,
-        description="Default horizontal UV mirror used by RX geometry export. Keep off unless the Blender UVs need an inverse U adapter.",
+        description="Default horizontal UV mirror used by RX mesh export. Keep off unless the Blender UVs need an inverse U adapter.",
     )
     bpy.types.Scene.bi_export_uv_flip_v = bpy.props.BoolProperty(
         name="Default Export UV Flip V",
         default=True,
-        description="Default Blender-to-game UV V conversion used by RX geometry export.",
+        description="Default Blender-to-game UV V conversion used by RX mesh export.",
     )
     bpy.types.Scene.bi_morph_include_normals = bpy.props.BoolProperty(
         name="Morph Normals",

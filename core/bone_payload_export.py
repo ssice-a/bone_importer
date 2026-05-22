@@ -40,12 +40,15 @@ BIND_REST_STALE_EPSILON = 1e-4
 
 def resolve_bone_payload_paths(output_directory: str, draw_key: str):
     directory_path = bpy.path.abspath(output_directory or "//")
-    os.makedirs(directory_path, exist_ok=True)
+    bone_directory_path = os.path.join(directory_path, "Buffer", "Bone")
+    metadata_directory_path = os.path.join(directory_path, "Meta", "Bone")
+    os.makedirs(bone_directory_path, exist_ok=True)
+    os.makedirs(metadata_directory_path, exist_ok=True)
     safe_draw_key = sanitize_export_name(draw_key, "draw_part")
-    bone_static_path = os.path.join(directory_path, f"{safe_draw_key}_bone_static.buf")
-    bone_anim_path = os.path.join(directory_path, f"{safe_draw_key}_bone_anim.buf")
-    bone_bind_path = os.path.join(directory_path, f"{safe_draw_key}_bone_bind.buf")
-    bone_metadata_path = os.path.join(directory_path, f"{safe_draw_key}_bone.json")
+    bone_static_path = os.path.join(bone_directory_path, f"{safe_draw_key}_bone_static.buf")
+    bone_anim_path = os.path.join(bone_directory_path, f"{safe_draw_key}_bone_anim.buf")
+    bone_bind_path = os.path.join(bone_directory_path, f"{safe_draw_key}_bone_bind.buf")
+    bone_metadata_path = os.path.join(metadata_directory_path, f"{safe_draw_key}_bone.json")
     return directory_path, bone_static_path, bone_anim_path, bone_bind_path, bone_metadata_path
 
 
@@ -283,10 +286,13 @@ def write_shared_clip_buffers(output_directory, clip_name, clip_id, exported_fra
     normalized_clip_name = normalize_clip_name(clip_name)
     safe_clip_name = sanitize_export_name(normalized_clip_name, "rxanimin")
     directory_path = bpy.path.abspath(output_directory or "//")
-    os.makedirs(directory_path, exist_ok=True)
-    timeline_static_path = os.path.join(directory_path, f"{safe_clip_name}_timeline_static.buf")
-    master_playback_path = os.path.join(directory_path, f"{safe_clip_name}_master_playback.buf")
-    clip_metadata_path = os.path.join(directory_path, f"{safe_clip_name}_clip.json")
+    timeline_directory_path = os.path.join(directory_path, "Buffer", "Timeline")
+    metadata_directory_path = os.path.join(directory_path, "Meta", "Manifest")
+    os.makedirs(timeline_directory_path, exist_ok=True)
+    os.makedirs(metadata_directory_path, exist_ok=True)
+    timeline_static_path = os.path.join(timeline_directory_path, f"{safe_clip_name}_timeline_static.buf")
+    master_playback_path = os.path.join(timeline_directory_path, f"{safe_clip_name}_master_playback.buf")
+    clip_metadata_path = os.path.join(metadata_directory_path, f"{safe_clip_name}_clip.json")
 
     loop_settings = resolve_animation_loop_settings(exported_frames, -1, -1)
     timeline_rows = build_timeline_static_uint4_rows(

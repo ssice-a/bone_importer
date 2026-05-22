@@ -1,5 +1,6 @@
 import ast
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,8 +13,9 @@ def _load_manifest_helpers():
     selected = [node for node in module_ast.body if isinstance(node, ast.FunctionDef) and node.name in wanted]
     namespace = {
         "json": json,
-        "os": __import__("os"),
+        "os": os,
         "MANIFEST_FILE_NAME": "rx_export_manifest.json",
+        "MANIFEST_DIR_NAME": os.path.join("Meta", "Manifest"),
     }
     compiled = compile(ast.Module(body=selected, type_ignores=[]), str(source_path), "exec")
     exec(compiled, namespace)
@@ -33,6 +35,26 @@ class ManifestIOTests(unittest.TestCase):
         self.assertEqual(manifest["format"], "rx_runtime_manifest_v2")
         self.assertEqual(manifest["clips"], {})
         self.assertEqual(manifest["payloads"], {})
+
+    def test_load_export_manifest_prefers_meta_manifest_path(self):
+        load_export_manifest = _load_manifest_helpers()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            meta_manifest_dir = Path(temp_dir) / "Meta" / "Manifest"
+            meta_manifest_dir.mkdir(parents=True)
+            (Path(temp_dir) / "rx_export_manifest.json").write_text(
+                '{"format":"legacy","clips":{"legacy":{}}}',
+                encoding="utf-8",
+            )
+            (meta_manifest_dir / "rx_export_manifest.json").write_text(
+                '{"format":"rx_runtime_manifest_v2","clips":{"meta":{}}}',
+                encoding="utf-8",
+            )
+
+            manifest = load_export_manifest(temp_dir)
+
+        self.assertIn("meta", manifest["clips"])
+        self.assertNotIn("legacy", manifest["clips"])
 
 
 if __name__ == "__main__":

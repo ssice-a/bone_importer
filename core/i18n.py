@@ -35,7 +35,7 @@ TRANSLATIONS = {
     "preview.ib": ("IB Collections: {count}", "IB 集合: {count}"),
     "preview.parts": ("Parts: {count}", "Part 数: {count}"),
     "preview.segments": ("Draw Segments: {count}", "绘制段: {count}"),
-    "preview.geometry": ("Geometry Required: {count}", "需要导出几何: {count}"),
+    "preview.geometry": ("Mesh Required: {count}", "需要导出 Mesh: {count}"),
     "preview.source": ("Source Skin: {count}", "源模型蒙皮: {count}"),
     "preview.own": ("Own Skin: {count}", "自有骨骼蒙皮: {count}"),
     "preview.morph": ("Morph: {count}", "形态键: {count}"),

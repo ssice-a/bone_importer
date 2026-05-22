@@ -123,23 +123,29 @@ def build_runtime_export_name_prefix(proxy_armature):
 def resolve_animation_export_paths(output_directory, proxy_armature):
     """Build animation/bind/static paths for one proxy armature."""
     directory_path = bpy.path.abspath(output_directory or "//")
-    os.makedirs(directory_path, exist_ok=True)
+    bone_directory = os.path.join(directory_path, "Buffer", "Bone")
+    metadata_directory = os.path.join(directory_path, "Meta", "Bone")
+    os.makedirs(bone_directory, exist_ok=True)
+    os.makedirs(metadata_directory, exist_ok=True)
     safe_name = build_runtime_export_name_prefix(proxy_armature)
-    tqs_path = os.path.join(directory_path, f"{safe_name}_clip_tqs.buf")
-    bind_path = os.path.join(directory_path, f"{safe_name}_clip_bind.buf")
-    static_clip_path = os.path.join(directory_path, f"{safe_name}_clip_static.buf")
-    debug_metadata_path = os.path.join(directory_path, f"{safe_name}_clip.json")
+    tqs_path = os.path.join(bone_directory, f"{safe_name}_clip_tqs.buf")
+    bind_path = os.path.join(bone_directory, f"{safe_name}_clip_bind.buf")
+    static_clip_path = os.path.join(bone_directory, f"{safe_name}_clip_static.buf")
+    debug_metadata_path = os.path.join(metadata_directory, f"{safe_name}_clip.json")
     return directory_path, tqs_path, bind_path, static_clip_path, debug_metadata_path
 
 
 def resolve_clip_export_paths(output_directory, clip_name):
     """Build shared manifest/master-control paths for one exported logical clip."""
     directory_path = bpy.path.abspath(output_directory or "//")
-    os.makedirs(directory_path, exist_ok=True)
+    timeline_directory = os.path.join(directory_path, "Buffer", "Timeline")
+    manifest_directory = os.path.join(directory_path, "Meta", "Manifest")
+    os.makedirs(timeline_directory, exist_ok=True)
+    os.makedirs(manifest_directory, exist_ok=True)
     safe_clip_name = sanitize_export_name(clip_name, "rxanimin")
-    clip_manifest_path = os.path.join(directory_path, f"{safe_clip_name}_clip_manifest.json")
-    timeline_static_path = os.path.join(directory_path, f"{safe_clip_name}_timeline_static.buf")
-    master_playback_path = os.path.join(directory_path, f"{safe_clip_name}_master_playback.buf")
+    clip_manifest_path = os.path.join(manifest_directory, f"{safe_clip_name}_clip_manifest.json")
+    timeline_static_path = os.path.join(timeline_directory, f"{safe_clip_name}_timeline_static.buf")
+    master_playback_path = os.path.join(timeline_directory, f"{safe_clip_name}_master_playback.buf")
     return directory_path, clip_manifest_path, timeline_static_path, master_playback_path
 
 

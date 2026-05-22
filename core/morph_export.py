@@ -75,13 +75,18 @@ class MorphMeshExportResult:
 def resolve_morph_export_paths(output_directory: str, clip_name: str, mesh_key: str):
     """Build shared morph-manifest and per-mesh morph paths."""
     directory_path = bpy.path.abspath(output_directory or "//")
-    os.makedirs(directory_path, exist_ok=True)
+    morph_directory_path = os.path.join(directory_path, "Buffer", "Morph")
+    manifest_directory_path = os.path.join(directory_path, "Meta", "Manifest")
+    metadata_directory_path = os.path.join(directory_path, "Meta", "Morph")
+    os.makedirs(morph_directory_path, exist_ok=True)
+    os.makedirs(manifest_directory_path, exist_ok=True)
+    os.makedirs(metadata_directory_path, exist_ok=True)
     safe_clip_name = sanitize_export_name(normalize_clip_name(clip_name), "rxanimin")
     safe_mesh_key = sanitize_export_name(mesh_key, "morph_mesh")
-    morph_manifest_path = os.path.join(directory_path, f"{safe_clip_name}_morph_manifest.json")
-    morph_static_path = os.path.join(directory_path, f"{safe_mesh_key}_morph_static.buf")
-    morph_anim_path = os.path.join(directory_path, f"{safe_mesh_key}_morph_anim.buf")
-    morph_metadata_path = os.path.join(directory_path, f"{safe_mesh_key}_morph.json")
+    morph_manifest_path = os.path.join(manifest_directory_path, f"{safe_clip_name}_morph_manifest.json")
+    morph_static_path = os.path.join(morph_directory_path, f"{safe_mesh_key}_morph_static.buf")
+    morph_anim_path = os.path.join(morph_directory_path, f"{safe_mesh_key}_morph_anim.buf")
+    morph_metadata_path = os.path.join(metadata_directory_path, f"{safe_mesh_key}_morph.json")
     return directory_path, morph_manifest_path, morph_static_path, morph_anim_path, morph_metadata_path
 
 
@@ -633,8 +638,12 @@ def resolve_base_position_resource(output_directory: str, mesh_key: str):
                 "stride": stride,
             }
 
-    buffer_directory = os.path.join(absolute_output_directory, "Buffer")
-    if os.path.isdir(buffer_directory):
+    for buffer_directory in (
+        os.path.join(absolute_output_directory, "Buffer", "Mesh"),
+        os.path.join(absolute_output_directory, "Buffer"),
+    ):
+        if not os.path.isdir(buffer_directory):
+            continue
         mesh_key_lower = mesh_key.lower()
         for file_name in sorted(os.listdir(buffer_directory)):
             lower_name = file_name.lower()
@@ -662,7 +671,7 @@ def _materialize_base_position_buffer(output_directory: str, mesh_key: str, base
     if relative_path and not relative_path.startswith(".."):
         return base_position_resource
 
-    buffer_dir = os.path.join(export_root, "Buffer")
+    buffer_dir = os.path.join(export_root, "Buffer", "Mesh")
     os.makedirs(buffer_dir, exist_ok=True)
     safe_mesh_key = sanitize_export_name(mesh_key, "morph_mesh")
     target_path = os.path.join(buffer_dir, f"{safe_mesh_key}_BasePosition.buf")

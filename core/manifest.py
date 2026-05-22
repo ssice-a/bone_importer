@@ -11,14 +11,19 @@ from .draw_part import build_draw_key, draw_part_manifest_rows
 
 
 MANIFEST_FILE_NAME = "rx_export_manifest.json"
+MANIFEST_DIR_NAME = os.path.join("Meta", "Manifest")
 
 
 def resolve_export_manifest_path(output_directory: str) -> str:
-    return os.path.join(os.path.abspath(output_directory or "."), MANIFEST_FILE_NAME)
+    return os.path.join(os.path.abspath(output_directory or "."), MANIFEST_DIR_NAME, MANIFEST_FILE_NAME)
 
 
 def load_export_manifest(output_directory: str) -> dict:
     manifest_path = resolve_export_manifest_path(output_directory)
+    if not os.path.exists(manifest_path):
+        legacy_manifest_path = os.path.join(os.path.abspath(output_directory or "."), MANIFEST_FILE_NAME)
+        if os.path.exists(legacy_manifest_path):
+            manifest_path = legacy_manifest_path
     if not os.path.exists(manifest_path):
         return {
             "format": "rx_runtime_manifest_v2",

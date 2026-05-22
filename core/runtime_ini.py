@@ -65,8 +65,8 @@ def _resource_key(draw_key: str) -> str:
     return sanitize_export_name(draw_key, "draw_part")
 
 
-def _geometry_resource_suffix(record: dict) -> str:
-    return sanitize_export_name(str(record.get("resource_suffix", "") or ""), "geometry")
+def _mesh_resource_suffix(record: dict) -> str:
+    return sanitize_export_name(str(record.get("resource_suffix", "") or ""), "mesh")
 
 
 def _draw_segment_comment(record: dict) -> str:
@@ -314,12 +314,12 @@ def _append_morph_resources(lines: list[str], draw_key: str, payload: dict, outp
 
 def _append_geometry_resources(lines: list[str], draw_key: str, records: list[dict], output_directory: str):
     for record in records:
-        suffix = _geometry_resource_suffix(record)
+        suffix = _mesh_resource_suffix(record)
         if not suffix:
             suffix = _resource_key(draw_key)
         index_buffer = dict(record.get("index_buffer", {}) or {})
         index_path = index_buffer.get("file_path", "") or index_buffer.get("filename", "") or index_buffer.get("file_name", "")
-        _line(lines, f"[ResourceGeometryIndex_{suffix}]")
+        _line(lines, f"[ResourceMeshIndex_{suffix}]")
         _line(lines, "type = Buffer")
         _line(lines, "format = R32_UINT")
         _line(lines, f"filename = {_ini_filename(index_path, output_directory)}")
@@ -335,7 +335,7 @@ def _append_geometry_resources(lines: list[str], draw_key: str, records: list[di
                 or buffer_payload.get("filename", "")
                 or buffer_payload.get("file_name", "")
             )
-            resource_name = f"ResourceGeometry_{suffix}_{slot}"
+            resource_name = f"ResourceMesh_{suffix}_{slot}"
             _line(lines, f"[{resource_name}]")
             _line(lines, "type = Buffer")
             _line(lines, f"stride = {stride}")
@@ -365,7 +365,7 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
     morph_payload = payload.get("morph")
     geometry_records = list(payload.get("geometry", []) or [])
     geometry_record = geometry_records[0] if geometry_records else None
-    geometry_suffix = _geometry_resource_suffix(geometry_record or {}) if geometry_record is not None else ""
+    geometry_suffix = _mesh_resource_suffix(geometry_record or {}) if geometry_record is not None else ""
     geometry_vertex_buffers = dict((geometry_record or {}).get("vertex_buffers", {}) or {})
     match_priority = int(draw_part.get("match_priority", DEFAULT_MATCH_PRIORITY) or DEFAULT_MATCH_PRIORITY)
     _line(lines, f"[TextureOverride_RX_{key}]")
@@ -386,9 +386,9 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
     )
     if use_runtime_morph:
         shader = "CustomShader_ApplyMorph_PNTA40" if str(morph_payload.get("base_position_layout", "")).endswith("PNTA40") else "CustomShader_ApplyMorph"
-        base_srv_resource = f"ResourceMorphBaseVB_{key}_SRV" if morph_payload.get("base_position_path") else f"ResourceGeometry_{geometry_suffix}_vb0_SRV"
-        base_copy_resource = f"ResourceMorphBaseVB_{key}" if morph_payload.get("base_position_path") else f"ResourceGeometry_{geometry_suffix}_vb0"
-        live_position_resource = f"ResourceGeometry_{geometry_suffix}_vb0"
+        base_srv_resource = f"ResourceMorphBaseVB_{key}_SRV" if morph_payload.get("base_position_path") else f"ResourceMesh_{geometry_suffix}_vb0_SRV"
+        base_copy_resource = f"ResourceMorphBaseVB_{key}" if morph_payload.get("base_position_path") else f"ResourceMesh_{geometry_suffix}_vb0"
+        live_position_resource = f"ResourceMesh_{geometry_suffix}_vb0"
         _line(lines, f"cs-t0 = {base_srv_resource}")
         _line(lines, f"cs-t1 = ResourceMorphStatic_{key}")
         _line(lines, f"cs-t2 = ResourceMorphAnim_{key}")
@@ -416,12 +416,12 @@ def _append_texture_override(lines: list[str], draw_key: str, draw_part: dict, p
         _line(lines, f"vs-t0 = ResourceBonePalette_{key}")
         _line(lines, f"vs-cb1 = ResourceFakeCB1_{key}")
     if geometry_record is not None:
-        _line(lines, f"ib = ref ResourceGeometryIndex_{geometry_suffix}")
+        _line(lines, f"ib = ref ResourceMeshIndex_{geometry_suffix}")
         for slot_name, _vertex_buffer in sorted(geometry_vertex_buffers.items(), key=lambda item: item[0]):
             slot = str(slot_name or "").lower()
-            _line(lines, f"{slot} = ref ResourceGeometry_{geometry_suffix}_{slot}")
+            _line(lines, f"{slot} = ref ResourceMesh_{geometry_suffix}_{slot}")
         if "vb0" in geometry_vertex_buffers and "vb3" not in geometry_vertex_buffers:
-            _line(lines, f"vb3 = ref ResourceGeometry_{geometry_suffix}_vb0")
+            _line(lines, f"vb3 = ref ResourceMesh_{geometry_suffix}_vb0")
         index_buffer = dict(geometry_record.get("index_buffer", {}) or {})
         index_count = int(index_buffer.get("index_count", geometry_record.get("index_count", 0)) or 0)
         _line(lines, f"; draw segment: {_draw_segment_comment(geometry_record)}")

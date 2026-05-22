@@ -265,22 +265,22 @@ INI Only
   Regenerate executable INI/HLSL from the existing Runtime Manifest.
 ```
 
-There is no standalone `Geometry Only` export type. Geometry export is controlled
+There is no standalone `Mesh Only` export type. Mesh export is controlled
 by a separate checkbox:
 
 ```text
-Export Geometry = true by default
+Export Mesh = true by default
 ```
 
-If an export needs geometry and `Export Geometry` is enabled, geometry is
-exported/refreshed. If an export needs geometry and `Export Geometry` is
-disabled, the exporter must use existing manifest geometry or report a clear
+If an export needs mesh buffers and `Export Mesh` is enabled, mesh buffers are
+exported/refreshed. If an export needs mesh buffers and `Export Mesh` is
+disabled, the exporter must use existing manifest mesh buffers or report a clear
 error.
 
 Every export type must still leave an executable runtime package when possible.
 Partial exports merge into the Runtime Manifest and preserve payloads that were
 not touched by the current export. A later Bone-only or Morph-only export must
-not delete geometry, INI routes, or unrelated payloads from a previous Full
+not delete mesh buffers, INI routes, or unrelated payloads from a previous Full
 export.
 
 Normal exports do not delete missing DrawParts. Destructive cleanup belongs to a
@@ -295,7 +295,7 @@ Output Dir
 Capture Manifest
 RX Export Collection
 Export Type
-Export Geometry
+Export Mesh
 Frame Start
 Frame End
 Frame Step
@@ -312,7 +312,7 @@ Frame Step        = 1
 Source FPS        = scene.render.fps
 Target Game FPS   = 120
 Playback Speed    = 1.0
-Export Geometry   = enabled
+Export Mesh       = enabled
 ```
 
 Preview-only UI:
@@ -726,7 +726,7 @@ Reserved / not yet decided:
 Rejected for v3:
 
 - global bone pool replacing DrawPart-local payloads
-- standalone `Geometry Only` export type
+- standalone `Mesh Only` export type
 - silently deleting manifest entries on partial export
 - hidden capture-manifest folder scanning
 - automatic left/right bone matching as a mirror fix

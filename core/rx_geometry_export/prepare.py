@@ -12,9 +12,10 @@ from .vertex_groups import collect_weighted_numeric_vertex_groups
 from ..coordinate_contract import resolve_object_mirror_x, resolve_object_uv_mirror_u, resolve_object_uv_flip_v
 
 
-BUFFER_EXPORT_DIR_NAME = "Buffer"
+BUFFER_EXPORT_DIR_NAME = os.path.join("Buffer", "Mesh")
 CAPTURE_MANIFEST_FILE_NAME = "capture_manifest.json"
 EXPORT_MANIFEST_FILE_NAME = "export_manifest.json"
+EXPORT_MANIFEST_DIR_NAME = os.path.join("Meta", "Manifest")
 
 
 def prepare_geometry_export_collection(
@@ -113,7 +114,11 @@ def prepare_geometry_export_collection(
             "materials, LOD chains, and toggle draw sets are intentionally omitted."
         ),
     }
-    manifest_path = write_json(os.path.join(normalized_output_dir, EXPORT_MANIFEST_FILE_NAME), manifest, compact=True)
+    manifest_path = write_json(
+        os.path.join(normalized_output_dir, EXPORT_MANIFEST_DIR_NAME, EXPORT_MANIFEST_FILE_NAME),
+        manifest,
+        compact=True,
+    )
     timings["manifest"] = time.perf_counter() - stage_start
 
     timings["total"] = time.perf_counter() - total_start
