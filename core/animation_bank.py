@@ -7,6 +7,7 @@ runtime UI action selector.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, replace
 import os
 
@@ -230,6 +231,14 @@ def build_animation_bank_from_manifest(manifest: dict, bank_name: str = DEFAULT_
         timeline_static_path=str(bank_payload.get("timeline_static", "") or ""),
         master_playback_path=str(bank_payload.get("master_playback", "") or ""),
     )
+
+
+def build_animation_bank_for_export(manifest: dict, incoming_clip: ClipSpec, bank_name: str = DEFAULT_BANK_NAME) -> AnimationBank:
+    """Build the post-export bank without mutating the persisted manifest."""
+
+    merged_manifest = deepcopy(manifest or {})
+    merge_clip_into_manifest(merged_manifest, incoming_clip, bank_name)
+    return build_animation_bank_from_manifest(merged_manifest, bank_name)
 
 
 def build_timeline_static_rows(bank: AnimationBank) -> list[tuple[int, int, int, int]]:

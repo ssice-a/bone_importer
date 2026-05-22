@@ -19,6 +19,7 @@ ClipSpec = animation_bank.ClipSpec
 build_clip_spec = animation_bank.build_clip_spec
 build_master_playback_rows = animation_bank.build_master_playback_rows
 build_timeline_static_rows = animation_bank.build_timeline_static_rows
+build_animation_bank_for_export = animation_bank.build_animation_bank_for_export
 merge_clip_into_manifest = animation_bank.merge_clip_into_manifest
 
 
@@ -94,6 +95,18 @@ class AnimationBankTests(unittest.TestCase):
         self.assertEqual([clip["clip_index"] for clip in manifest["clips"]], [0, 1])
         self.assertEqual(manifest["clips"][0]["sample_count"], 30)
         self.assertEqual(manifest["clips"][1]["sample_count"], 20)
+
+    def test_export_bank_includes_existing_manifest_clips_before_writing_timeline(self):
+        manifest = {}
+        idle = build_clip_spec("Idle", 0, 0, 9, 1, source_fps=30.0, target_game_fps=120.0)
+        dance = build_clip_spec("Dance", 1, 0, 19, 1, source_fps=30.0, target_game_fps=120.0)
+        merge_clip_into_manifest(manifest, idle)
+
+        bank = build_animation_bank_for_export(manifest, dance)
+
+        self.assertEqual([clip.name for clip in bank.clips], ["idle", "dance"])
+        self.assertEqual([clip.clip_index for clip in bank.clips], [0, 1])
+        self.assertEqual(build_timeline_static_rows(bank), [(2, 0, 0, 0), (10, 4, 0, 9), (20, 4, 0, 19)])
 
 
 if __name__ == "__main__":

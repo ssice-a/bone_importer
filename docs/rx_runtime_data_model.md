@@ -69,6 +69,8 @@ all DrawPart-local morph shaders sample clip N
 
 So switching two or more actions does not require a global bone pool. It requires every local payload to store the same Clip table semantics.
 
+When a new export pass adds or replaces one Clip, the exporter first rebuilds the shared timeline from the persisted Runtime Manifest plus that incoming Clip. The active DrawPart payloads then append or replace the same stable `clip_index` inside their local tables. This keeps the small DrawPart-local buffers while making the Action selector a bank-level control.
+
 ## Runtime Coordinate Contract
 
 The Runtime Coordinate Contract is the single rule set that keeps replacement geometry, Bone Payload data, Morph Payload data, and generated HLSL in the same runtime space for the same DrawPart.
@@ -286,6 +288,15 @@ Performance rule:
 sample once by source-bone group, write many DrawPart-local payloads
 ```
 
+Local Bone Payload writing is incremental:
+
+```text
+new Clip name   -> append one local clip row and TQ block
+same Clip name  -> replace that local clip row and TQ block
+```
+
+The first export for a DrawPart must build its local clip table from Action index `0`; local Bone Payloads do not silently invent missing earlier Actions. This keeps slot/bind semantics explicit instead of hiding gaps with a guessed pose.
+
 ## Morph Payload
 
 Morph Payload is local to one DrawPart and independent from Bone Payload.
@@ -333,6 +344,8 @@ payload = [clip][sample][channel] fp16 weights, sample-major within each Clip
 ```
 
 If a DrawPart has no morph for a Clip, either omit the Morph Payload for that DrawPart or write a clip-table entry with zero channels/effective zero weights.
+
+Multi-Action morph payloads reuse one `morph_static` channel table for all local clips. Export passes therefore require the same shape-key channel order for that DrawPart. If `Animated Channels` would produce a different channel set for another Action, export a stable set such as `All Channels` before building that multi-Action morph bank; the exporter rejects mismatched channel orders instead of letting old weight rows address the wrong influences.
 
 The base vertex buffer is not exported by Bone Importer. It is an explicit DrawPart setting supplied by the user or external model export workflow.
 

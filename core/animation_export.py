@@ -8,7 +8,14 @@ import bpy
 import numpy as np
 
 from ..constants import RESERVED_PALETTE_ROWS
-from .animation_bank import AnimationBank, ClipSpec, build_master_playback_rows, build_timeline_static_rows
+from .animation_bank import (
+    AnimationBank,
+    ClipSpec,
+    build_animation_bank_for_export,
+    build_master_playback_rows,
+    build_timeline_static_rows,
+    normalize_clip_name as normalize_bank_clip_name,
+)
 from .export import build_runtime_export_plan
 from .layout import convert_matrix_to_palette_rows
 from .models import AnimationExportResult
@@ -251,6 +258,18 @@ def _build_single_clip_bank(frame_count, fps, ticks_per_sample, loop_start, loop
         default_loop_end_sample=int(normalized_loop_end),
     )
     return AnimationBank(name=clip_spec.name, clips=(clip_spec,))
+
+
+def build_export_timeline_bank(output_directory, incoming_clip):
+    """Resolve the Action bank that will exist after this export pass."""
+
+    # Keep the animation-bank layer Blender-free; only exporters read disk state.
+    from .manifest import load_export_manifest
+
+    return build_animation_bank_for_export(
+        load_export_manifest(bpy.path.abspath(output_directory or "//")),
+        incoming_clip,
+    )
 
 
 def build_timeline_static_uint4_rows(frame_count, fps, presents_per_step, loop_start, loop_end):
@@ -700,20 +719,25 @@ def write_shared_timeline_sidecar_files(
         timeline_static_path,
         master_playback_path,
     ) = resolve_clip_export_paths(output_directory, normalized_clip_name)
-    timeline_static_rows = build_timeline_static_uint4_rows(
-        frame_count=len(exported_frames),
-        fps=fps,
-        presents_per_step=presents_per_step,
-        loop_start=loop_settings["resolved_loop_start_sample"],
-        loop_end=loop_settings["resolved_loop_end_sample"],
+    incoming_clip = ClipSpec(
+        name=normalize_bank_clip_name(normalized_clip_name),
+        clip_id=int(clip_id),
+        clip_index=0,
+        frame_start=int(exported_frames[0]),
+        frame_end=int(exported_frames[-1]),
+        frame_step=int(frame_step),
+        sample_count=len(exported_frames),
+        source_fps=float(fps),
+        target_game_fps=120.0,
+        playback_speed=1.0,
+        default_ticks_per_sample=max(int(presents_per_step), 1),
+        default_loop_start_sample=int(loop_settings["resolved_loop_start_sample"]),
+        default_loop_end_sample=int(loop_settings["resolved_loop_end_sample"]),
     )
+    timeline_bank = build_export_timeline_bank(output_directory, incoming_clip)
+    timeline_static_rows = build_timeline_static_rows(timeline_bank)
     write_uint4_buffer_rows(timeline_static_path, timeline_static_rows)
-    master_playback_rows = build_master_playback_uint4_rows(
-        frame_count=len(exported_frames),
-        presents_per_step=presents_per_step,
-        loop_start=loop_settings["resolved_loop_start_sample"],
-        loop_end=loop_settings["resolved_loop_end_sample"],
-    )
+    master_playback_rows = build_master_playback_rows(timeline_bank)
     write_uint4_buffer_rows(master_playback_path, master_playback_rows)
 
     timeline_static_metadata_path = ""

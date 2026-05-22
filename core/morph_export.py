@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 import math
 import os
 import re
@@ -22,12 +23,14 @@ from .animation_export import (
     write_json_file,
     write_uint4_buffer_rows,
 )
+from .animation_bank import build_animation_bank_for_export, build_clip_spec
 from .coordinate_contract import (
     bitangent_sign_needs_flip,
     mirror_x_vector,
     resolve_object_mirror_x,
     resolve_object_uv_flip_v,
 )
+from .local_clip_payload import merge_morph_anim_clip, read_row_buffer
 
 
 MORPH_FLAG_HAS_POSITION_DELTAS = 1 << 0
@@ -232,6 +235,43 @@ def write_morph_manifest(output_directory: str, clip_name: str, clip_id: int, me
     )
     write_json_file(morph_manifest_path, build_morph_manifest(clip_name, clip_id, mesh_results))
     return morph_manifest_path
+
+
+def _resolve_local_morph_clip_index(output_directory, clip_name, clip_id, frame_start, frame_end, frame_step):
+    from .manifest import load_export_manifest
+
+    incoming_clip = build_clip_spec(
+        name=clip_name,
+        clip_id=clip_id,
+        frame_start=frame_start,
+        frame_end=frame_end,
+        frame_step=frame_step,
+        source_fps=30.0,
+        target_game_fps=120.0,
+    )
+    bank = build_animation_bank_for_export(
+        load_export_manifest(bpy.path.abspath(output_directory or "//")),
+        incoming_clip,
+    )
+    for clip in bank.clips:
+        if clip.name == incoming_clip.name:
+            return int(clip.clip_index)
+    raise ValueError(f"Morph export Clip is missing from the post-export Animation Bank: {incoming_clip.name}")
+
+
+def _validate_existing_morph_channels(metadata_path: str, channel_names):
+    if not metadata_path or not os.path.exists(metadata_path):
+        return
+    with open(metadata_path, "r", encoding="utf-8-sig") as metadata_file:
+        metadata = json.load(metadata_file)
+    existing_names = tuple(str(name) for name in metadata.get("channel_names", ()) or ())
+    current_names = tuple(str(name) for name in channel_names)
+    if existing_names and existing_names != current_names:
+        raise ValueError(
+            "Morph channel order changed between exported Actions for "
+            f"{metadata.get('mesh_key', os.path.basename(metadata_path))}. "
+            "Use a stable channel set such as All Channels before building a multi-Action morph bank."
+        )
 
 
 def _sign_not_zero(value: float) -> float:
@@ -1225,8 +1265,22 @@ def export_morph_mesh_for_proxy_armature(
                 clip_name,
                 mesh_key,
             )
+            local_clip_index = _resolve_local_morph_clip_index(
+                output_directory,
+                clip_name,
+                clip_id,
+                frame_start,
+                frame_end,
+                frame_step,
+            )
+            _validate_existing_morph_channels(morph_metadata_path, exported_channel_names)
+            merged_anim_rows = merge_morph_anim_clip(
+                read_row_buffer(morph_anim_path, "<u4", "MorphAnim file"),
+                anim_rows,
+                clip_index=local_clip_index,
+            )
             write_uint4_buffer_rows(morph_static_path, static_rows)
-            write_uint4_buffer_rows(morph_anim_path, anim_rows)
+            write_uint4_buffer_rows(morph_anim_path, merged_anim_rows)
 
             metadata_payload = {
                 "format": "rx_morph_mesh_v1",

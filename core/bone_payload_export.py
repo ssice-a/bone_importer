@@ -14,10 +14,11 @@ import numpy as np
 
 from ..constants import RESERVED_PALETTE_ROWS
 from .animation_bank import (
-    AnimationBank,
     ClipSpec,
+    build_animation_bank_for_export,
     build_master_playback_rows,
     build_timeline_static_rows,
+    normalize_clip_name as normalize_bank_clip_name,
 )
 from .bone_sample_bank import build_bone_sample_plan, resolve_sample_cache_directory, select_payload_samples
 from .animation_export import (
@@ -34,6 +35,7 @@ from .coordinate_contract import RX_BONE_PAYLOAD_FLAG_MIRROR_X, resolve_object_m
 from .proxy import capture_proxy_bind_matrices
 from .transform import BUFFER_CORRECTION_NONE, build_extra_blender_correction_matrix, get_proxy_buffer_correction_mode
 from .layout import build_matrix_from_flat_values, convert_matrix_to_palette_rows
+from .local_clip_payload import merge_bone_anim_clip, read_row_buffer, write_row_buffer
 
 
 BONE_PAYLOAD_FLAGS_NONE = 0
@@ -326,22 +328,11 @@ def _build_bone_payload_metadata(
     }
 
 
-def write_shared_clip_buffers(output_directory, clip_name, clip_id, exported_frames, fps, ticks_per_sample=1, write_metadata=True):
-    """Write Clip-level timeline/master playback buffers."""
-    normalized_clip_name = normalize_clip_name(clip_name)
-    safe_clip_name = sanitize_export_name(normalized_clip_name, "rxanimin")
-    directory_path = bpy.path.abspath(output_directory or "//")
-    timeline_directory_path = os.path.join(directory_path, "Buffer", "Timeline")
-    metadata_directory_path = os.path.join(directory_path, "Meta", "Manifest")
-    os.makedirs(timeline_directory_path, exist_ok=True)
-    os.makedirs(metadata_directory_path, exist_ok=True)
-    timeline_static_path = os.path.join(timeline_directory_path, f"{safe_clip_name}_timeline_static.buf")
-    master_playback_path = os.path.join(timeline_directory_path, f"{safe_clip_name}_master_playback.buf")
-    clip_metadata_path = os.path.join(metadata_directory_path, f"{safe_clip_name}_clip.json")
-
+def _build_export_clip_spec(clip_name, clip_id, exported_frames, fps, ticks_per_sample):
+    normalized_clip_name = normalize_bank_clip_name(clip_name)
     loop_settings = resolve_animation_loop_settings(exported_frames, -1, -1)
     frame_step = int(exported_frames[1] - exported_frames[0]) if len(exported_frames) > 1 else 1
-    clip_spec = ClipSpec(
+    return ClipSpec(
         name=normalized_clip_name,
         clip_id=int(clip_id),
         clip_index=0,
@@ -356,12 +347,74 @@ def write_shared_clip_buffers(output_directory, clip_name, clip_id, exported_fra
         default_loop_start_sample=int(loop_settings["resolved_loop_start_sample"]),
         default_loop_end_sample=int(loop_settings["resolved_loop_end_sample"]),
     )
-    bank = AnimationBank(
-        name=normalized_clip_name,
-        clips=(clip_spec,),
-        timeline_static_path=timeline_static_path,
-        master_playback_path=master_playback_path,
+
+
+def _build_post_export_bank(output_directory, clip_spec):
+    from .manifest import load_export_manifest
+
+    return build_animation_bank_for_export(
+        load_export_manifest(bpy.path.abspath(output_directory or "//")),
+        clip_spec,
     )
+
+
+def _resolve_export_clip_index(bank, clip_name):
+    normalized_clip_name = normalize_bank_clip_name(clip_name)
+    for clip in bank.clips:
+        if clip.name == normalized_clip_name:
+            return int(clip.clip_index)
+    raise ValueError(f"Export Clip is missing from the post-export Animation Bank: {normalized_clip_name}")
+
+
+def _merge_bone_anim_payload_clip(
+    *,
+    bone_static_path,
+    bone_anim_path,
+    incoming_anim_rows,
+    slot_ids,
+    payload_flags,
+    clip_index,
+    sample_count,
+    loop_range,
+):
+    merge = merge_bone_anim_clip(
+        read_row_buffer(bone_static_path, "<u4", "BoneStatic file"),
+        read_row_buffer(bone_anim_path, "<f4", "BoneAnim file"),
+        incoming_anim_rows,
+        clip_index=clip_index,
+        bone_count=len(slot_ids),
+        sample_count=sample_count,
+        loop_range=loop_range,
+    )
+    write_row_buffer(bone_anim_path, merge.anim_rows, "<f4", "BoneAnim merged rows")
+    write_uint4_buffer_rows(
+        bone_static_path,
+        build_bone_static_uint4_rows(
+            slot_ids,
+            sample_count,
+            payload_flags,
+            clip_sample_counts=merge.clip_sample_counts,
+            clip_loop_ranges=merge.clip_loop_ranges,
+        ),
+    )
+    return merge
+
+
+def write_shared_clip_buffers(output_directory, clip_name, clip_id, exported_frames, fps, ticks_per_sample=1, write_metadata=True):
+    """Write Clip-level timeline/master playback buffers."""
+    normalized_clip_name = normalize_clip_name(clip_name)
+    safe_clip_name = sanitize_export_name(normalized_clip_name, "rxanimin")
+    directory_path = bpy.path.abspath(output_directory or "//")
+    timeline_directory_path = os.path.join(directory_path, "Buffer", "Timeline")
+    metadata_directory_path = os.path.join(directory_path, "Meta", "Manifest")
+    os.makedirs(timeline_directory_path, exist_ok=True)
+    os.makedirs(metadata_directory_path, exist_ok=True)
+    timeline_static_path = os.path.join(timeline_directory_path, f"{safe_clip_name}_timeline_static.buf")
+    master_playback_path = os.path.join(timeline_directory_path, f"{safe_clip_name}_master_playback.buf")
+    clip_metadata_path = os.path.join(metadata_directory_path, f"{safe_clip_name}_clip.json")
+
+    clip_spec = _build_export_clip_spec(clip_name, clip_id, exported_frames, fps, ticks_per_sample)
+    bank = _build_post_export_bank(directory_path, clip_spec)
     timeline_rows = build_timeline_static_rows(bank)
     master_rows = build_master_playback_rows(bank)
     write_uint4_buffer_rows(timeline_static_path, timeline_rows)
@@ -373,13 +426,13 @@ def write_shared_clip_buffers(output_directory, clip_name, clip_id, exported_fra
         "clip_id": int(clip_id),
         "frame_start": int(exported_frames[0]),
         "frame_end": int(exported_frames[-1]),
-        "frame_step": frame_step,
+        "frame_step": int(clip_spec.frame_step),
         "frame_count": len(exported_frames),
         "frame_numbers": list(exported_frames),
         "fps": float(fps),
         "default_ticks_per_sample": max(int(ticks_per_sample), 1),
-        "default_loop_start_sample": loop_settings["resolved_loop_start_sample"],
-        "default_loop_end_sample": loop_settings["resolved_loop_end_sample"],
+        "default_loop_start_sample": int(clip_spec.default_loop_start_sample),
+        "default_loop_end_sample": int(clip_spec.default_loop_end_sample),
         "timeline_static_path": timeline_static_path,
         "master_playback_path": master_playback_path,
     }
@@ -866,6 +919,11 @@ def _write_bone_anim_from_sample_cache(path: str, sample_cache, sample_indices):
         selected_samples.tofile(binary_file)
 
 
+def _bone_anim_rows_from_sample_cache(sample_cache, sample_indices):
+    selected_samples = np.ascontiguousarray(select_payload_samples(sample_cache, sample_indices), dtype="<f4")
+    return selected_samples.reshape((-1, 4))
+
+
 def export_bone_payloads_for_draw_parts(
     context,
     draw_parts,
@@ -884,6 +942,19 @@ def export_bone_payloads_for_draw_parts(
     resolved_ticks_per_sample = max(int(ticks_per_sample), 1)
     normalized_draw_parts = tuple(draw_parts)
     exported_frames = normalize_animation_frame_range(frame_start, frame_end, frame_step)
+    export_clip_spec = _build_export_clip_spec(
+        clip_name,
+        clip_id,
+        exported_frames,
+        fps,
+        resolved_ticks_per_sample,
+    )
+    export_bank = _build_post_export_bank(output_directory, export_clip_spec)
+    local_clip_index = _resolve_export_clip_index(export_bank, export_clip_spec.name)
+    local_loop_range = (
+        int(export_clip_spec.default_loop_start_sample),
+        int(export_clip_spec.default_loop_end_sample),
+    )
     results = []
     failures = []
     prepared_payloads = []
@@ -1050,21 +1121,25 @@ def export_bone_payloads_for_draw_parts(
                 "bone_count": len(payload["bindings"]),
             }
             payload_start = perf_counter()
-            _write_bone_anim_from_sample_cache(
-                payload["bone_anim_path"],
+            incoming_anim_rows = _bone_anim_rows_from_sample_cache(
                 sample_cache["samples"],
                 sample_indices,
+            )
+            _merge_bone_anim_payload_clip(
+                bone_static_path=payload["bone_static_path"],
+                bone_anim_path=payload["bone_anim_path"],
+                incoming_anim_rows=incoming_anim_rows,
+                slot_ids=payload["slot_ids"],
+                payload_flags=payload["payload_flags"],
+                clip_index=local_clip_index,
+                sample_count=len(exported_frames),
+                loop_range=local_loop_range,
             )
             payload_timing["anim_write_seconds"] = perf_counter() - payload_start
             bind_start = perf_counter()
             _write_bone_bind_buffer(payload["bone_bind_path"], payload["binding_pose_bones"])
             payload_timing["bind_write_seconds"] = perf_counter() - bind_start
-            static_start = perf_counter()
-            write_uint4_buffer_rows(
-                payload["bone_static_path"],
-                build_bone_static_uint4_rows(payload["slot_ids"], len(exported_frames), payload["payload_flags"]),
-            )
-            payload_timing["static_write_seconds"] = perf_counter() - static_start
+            payload_timing["static_write_seconds"] = 0.0
             metadata = _build_bone_payload_metadata(
                 draw_part,
                 payload["bindings"],
