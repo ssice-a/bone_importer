@@ -93,6 +93,17 @@ class RXExportV3UIContractTests(unittest.TestCase):
         ):
             self.assertIn(property_name, PANEL_SOURCE)
 
+    def test_v3_export_operator_uses_collection_plan_and_mesh_export(self):
+        self.assertIn("build_collection_setup_plan_from_capture_manifest", OPERATORS_SOURCE)
+        self.assertIn("prepare_geometry_export_collection", OPERATORS_SOURCE)
+        self.assertIn("write_export_manifest", OPERATORS_SOURCE)
+        self.assertIn("bi_capture_manifest_path", OPERATORS_SOURCE)
+        self.assertIn("geometry_results", OPERATORS_SOURCE)
+        self.assertIn("build_rx_export_plan", OPERATORS_SOURCE)
+        self.assertIn("analyze_mesh_route", OPERATORS_SOURCE)
+        self.assertIn("bi_base_position_path", OPERATORS_SOURCE)
+        self.assertIn("bi_base_position_stride", OPERATORS_SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

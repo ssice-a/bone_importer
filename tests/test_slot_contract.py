@@ -49,20 +49,20 @@ class MeshData:
 class MeshObject(dict):
     type = "MESH"
 
-    def __init__(self, name, mirror_x=True):
+    def __init__(self, name, mirror_x=True, group_names=None):
         super().__init__()
         self.name = name
         self["bmc_mirror_flip"] = mirror_x
+        group_names = group_names or ("0", "1", "2")
         self.vertex_groups = [
-            VertexGroup("0", 0),
-            VertexGroup("1", 1),
-            VertexGroup("2", 2),
+            VertexGroup(group_name, index)
+            for index, group_name in enumerate(group_names)
         ]
         self.data = MeshData(
             [
                 Vertex((-1.0, 0.0, 0.0), 0),
-                Vertex((1.0, 0.0, 0.0), 1),
-                Vertex((0.0, 0.0, 0.0), 2),
+                Vertex((1.0, 0.0, 0.0), min(1, len(group_names) - 1)),
+                Vertex((0.0, 0.0, 0.0), min(2, len(group_names) - 1)),
             ]
         )
 
@@ -193,6 +193,26 @@ class SlotContractTests(unittest.TestCase):
         self.assertEqual(
             [(binding.slot_id, binding.source_bone) for binding in bindings],
             [(0, "0__mesh")],
+        )
+
+    def test_collection_draw_part_uses_union_of_all_source_mesh_slots(self):
+        face = MeshObject("face", group_names=("0", "1"))
+        lashes = MeshObject("lashes", group_names=("2",))
+        armature = Armature("arm", face.name)
+        armature.pose.bones.append(PoseBone("2__lashes"))
+        draw_part = DrawPart(face, armature)
+        draw_part.source_objects = (face, lashes)
+        draw_part.bone_slot_map_json = (
+            '[{"slot_id": 0, "source_bone": "0__face"},'
+            '{"slot_id": 1, "source_bone": "1__face"},'
+            '{"slot_id": 2, "source_bone": "2__lashes"}]'
+        )
+
+        bindings = self.slot_contract.resolve_bone_slot_bindings(draw_part)
+
+        self.assertEqual(
+            [(binding.slot_id, binding.source_bone) for binding in bindings],
+            [(0, "0__face"), (1, "1__face"), (2, "2__lashes")],
         )
 
 

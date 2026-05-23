@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 DEFAULT_RX_EXPORT_COLLECTION = "RX Export Collection"
 _PART_RE = re.compile(r"^part(?P<index>\d+)(?:\D.*)?$", re.IGNORECASE)
+_DRAW_PART_RE = re.compile(r"(?P<hash>[0-9A-Fa-f]{8})[-_](?P<count>\d+)[-_](?P<first>\d+)")
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,120 @@ def build_collection_setup_plan(
         draw_parts=tuple(setup_parts),
         warnings=tuple(warnings),
     )
+
+
+def build_collection_setup_plan_from_capture_manifest(
+    capture_manifest: dict,
+    *,
+    root_collection_name: str = DEFAULT_RX_EXPORT_COLLECTION,
+) -> RXCollectionSetupPlan:
+    """Build empty IB collections from a capture manifest before any RX export exists.
+
+    First-run setup cannot rely on ``rx_export_manifest.json`` yet.  The capture
+    manifest is the stable source for game DrawPart identities, so this creates
+    only the IB child collections and leaves object membership to the user.
+    """
+
+    if not isinstance(capture_manifest, dict):
+        raise ValueError("capture_manifest.json is not an object")
+
+    rows, warnings = _capture_manifest_draw_part_rows(capture_manifest)
+    setup_parts = [
+        RXDrawPartSetup(
+            draw_key=_build_draw_key(row["hash"], row["match_index_count"], row["first_index"]),
+            collection_name=f"{row['hash']}-{row['match_index_count']}-{row['first_index']}",
+        )
+        for row in rows
+    ]
+    return RXCollectionSetupPlan(
+        root_collection_name=root_collection_name,
+        draw_parts=tuple(setup_parts),
+        warnings=tuple(warnings),
+    )
+
+
+def _capture_manifest_draw_part_rows(capture_manifest: dict) -> tuple[list[dict], list[str]]:
+    warnings: list[str] = []
+    rows: list[dict] = []
+    target = dict(capture_manifest.get("target", {}) or {})
+    visible_anchor_ibs = list(target.get("visible_anchor_ibs", []) or [])
+    if visible_anchor_ibs:
+        for value in visible_anchor_ibs:
+            row = _capture_row_from_name(value)
+            if row is None:
+                warnings.append(f"Invalid visible_anchor_ibs entry: {value}")
+                continue
+            rows.append(row)
+        return _dedupe_and_sort_capture_rows(rows), warnings
+
+    candidate_ibs = list(capture_manifest.get("candidate_ibs", []) or [])
+    if candidate_ibs:
+        for candidate in candidate_ibs:
+            candidate = dict(candidate or {})
+            if candidate.get("enabled", True) is False:
+                continue
+            row = _capture_row_from_mapping(candidate)
+            if row is None:
+                warnings.append(f"Invalid candidate_ibs entry: {candidate}")
+                continue
+            rows.append(row)
+        return _dedupe_and_sort_capture_rows(rows), warnings
+
+    vertex_layout_table = dict(capture_manifest.get("vertex_layout_table", {}) or {})
+    for key, payload in vertex_layout_table.items():
+        row = _capture_row_from_mapping(dict(payload or {})) or _capture_row_from_name(key)
+        if row is None:
+            warnings.append(f"Invalid vertex_layout_table entry: {key}")
+            continue
+        rows.append(row)
+    return _dedupe_and_sort_capture_rows(rows), warnings
+
+
+def _capture_row_from_mapping(payload: dict) -> dict | None:
+    display_name = str(payload.get("display_name", payload.get("source_key", "")) or "")
+    row = _capture_row_from_name(display_name)
+    if row is not None:
+        return row
+
+    ib_hash = str(payload.get("ib_hash", "") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-fA-F]{8}", ib_hash):
+        return None
+    index_count = payload.get("match_index_count", payload.get("index_count", None))
+    first_index = payload.get("match_first_index", payload.get("first_index", 0))
+    try:
+        return {
+            "hash": ib_hash,
+            "match_index_count": int(index_count),
+            "first_index": int(first_index),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _capture_row_from_name(value) -> dict | None:
+    match = _DRAW_PART_RE.search(str(value or ""))
+    if match is None:
+        return None
+    return {
+        "hash": match.group("hash").lower(),
+        "match_index_count": int(match.group("count")),
+        "first_index": int(match.group("first")),
+    }
+
+
+def _dedupe_and_sort_capture_rows(rows: list[dict]) -> list[dict]:
+    by_key: dict[str, dict] = {}
+    for row in rows:
+        key = _build_draw_key(row["hash"], row["match_index_count"], row["first_index"])
+        by_key.setdefault(key, row)
+    return sorted(
+        by_key.values(),
+        key=lambda row: (-int(row["match_index_count"]), int(row["first_index"]), str(row["hash"])),
+    )
+
+
+def _build_draw_key(hash_value: str, match_index_count: int, first_index: int) -> str:
+    return f"{str(hash_value).lower()}_{int(match_index_count)}_{int(first_index)}"
 
 
 def _draw_part_collection_name(draw_part: dict, draw_key: str) -> str:

@@ -20,6 +20,48 @@ rx_collection_setup = _load_module()
 
 
 class RXCollectionSetupTests(unittest.TestCase):
+    def test_capture_manifest_visible_anchor_ibs_create_empty_sorted_ib_collections(self):
+        capture_manifest = {
+            "target": {
+                "visible_anchor_ibs": [
+                    "58870754-96-0",
+                    "1377f2c3-59679-0",
+                    "e78c7068-10590-12",
+                ]
+            }
+        }
+
+        plan = rx_collection_setup.build_collection_setup_plan_from_capture_manifest(capture_manifest)
+
+        self.assertEqual(
+            ["1377f2c3-59679-0", "e78c7068-10590-12", "58870754-96-0"],
+            [part.collection_name for part in plan.draw_parts],
+        )
+        self.assertEqual((), plan.draw_parts[0].objects)
+        self.assertFalse(plan.draw_parts[0].has_geometry)
+        self.assertFalse(plan.draw_parts[0].has_morph)
+        self.assertFalse(plan.draw_parts[0].has_bone)
+
+    def test_capture_manifest_falls_back_to_candidate_ibs_and_deduplicates(self):
+        capture_manifest = {
+            "candidate_ibs": [
+                {"enabled": True, "ib_hash": "aaaaaaaa", "match_index_count": 12, "match_first_index": 0},
+                {"enabled": False, "ib_hash": "bbbbbbbb", "match_index_count": 999, "match_first_index": 0},
+                {"enabled": True, "display_name": "cccccccc-256-4"},
+                {"enabled": True, "ib_hash": "aaaaaaaa", "match_index_count": 12, "match_first_index": 0},
+            ],
+            "vertex_layout_table": {
+                "dddddddd-1024-0": {"ib_hash": "dddddddd", "match_index_count": 1024, "match_first_index": 0},
+            },
+        }
+
+        plan = rx_collection_setup.build_collection_setup_plan_from_capture_manifest(capture_manifest)
+
+        self.assertEqual(
+            ["cccccccc-256-4", "aaaaaaaa-12-0"],
+            [part.collection_name for part in plan.draw_parts],
+        )
+
     def test_manifest_draw_parts_create_sorted_implicit_part_plan(self):
         manifest = {
             "draw_parts": {

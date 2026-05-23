@@ -44,6 +44,7 @@ class RuntimeDrawPart:
     buffer_correction_mode: str = ""
     base_position_path: str = ""
     base_position_stride: int = 0
+    source_objects: tuple[bpy.types.Object, ...] = ()
 
 
 def parse_draw_part_name(name: str) -> dict:
@@ -148,6 +149,7 @@ def _build_runtime_draw_part(obj, proxy_armature, _part_id: int, cb1_override: s
         buffer_correction_mode=str(getattr(obj, "bi_buffer_correction_mode", "")),
         base_position_path=str(getattr(obj, "bi_base_position_path", "") or ""),
         base_position_stride=int(getattr(obj, "bi_base_position_stride", 0) or 0),
+        source_objects=(obj,),
     )
 
 
@@ -190,7 +192,135 @@ def draw_parts_from_export_collection(collection) -> tuple[RuntimeDrawPart, ...]
             continue
         proxy_armature = find_proxy_armature_for_object(obj)
         candidates.append((obj, proxy_armature, cb1_override))
-    return _build_draw_parts_from_candidates(candidates)
+    if candidates:
+        return _build_draw_parts_from_candidates(candidates)
+    return _build_draw_parts_from_region_collections(collection)
+
+
+def _build_draw_parts_from_region_collections(collection) -> tuple[RuntimeDrawPart, ...]:
+    candidates = []
+    for region_collection, cb1_override in _iter_region_collections_with_cb1(collection):
+        try:
+            payload = parse_draw_part_name(getattr(region_collection, "name", ""))
+        except ValueError:
+            continue
+        mesh_objects = tuple(_mesh_objects_for_region_collection(region_collection))
+        if not mesh_objects:
+            continue
+        representative = mesh_objects[0]
+        proxy_armature = _find_proxy_armature_for_meshes(mesh_objects)
+        draw_key = build_draw_key(payload["hash"], payload["match_index_count"], payload["first_index"])
+        candidates.append(
+            {
+                **payload,
+                "draw_key": draw_key,
+                "object": representative,
+                "objects": mesh_objects,
+                "proxy_armature": proxy_armature,
+                "cb1_override": cb1_override,
+            }
+        )
+    sorted_payloads = sorted(candidates, key=draw_part_sort_key_from_payload)
+    seen_draw_keys = set()
+    draw_parts = []
+    for payload in sorted_payloads:
+        draw_key = payload["draw_key"]
+        if draw_key in seen_draw_keys:
+            raise ValueError(f"Duplicate draw part key {draw_key}; IB collection names must be unique")
+        seen_draw_keys.add(draw_key)
+        draw_parts.append(_build_runtime_draw_part_from_collection_payload(payload))
+    return tuple(draw_parts)
+
+
+def _iter_region_collections_with_cb1(collection):
+    if collection is None:
+        return
+    inherited_override = CB1_OVERRIDE_NONE
+    raw_override = getattr(collection, "bi_cb1_override", CB1_OVERRIDE_NONE)
+    inherited_override = normalize_cb1_override(raw_override, inherited_override)
+    for child in getattr(collection, "children", []) or []:
+        child_override = normalize_cb1_override(getattr(child, "bi_cb1_override", CB1_OVERRIDE_NONE), inherited_override)
+        yield child, child_override
+
+
+def _mesh_objects_for_region_collection(region_collection):
+    part_children = [
+        child
+        for child in getattr(region_collection, "children", []) or []
+        if _parse_part_collection_index(getattr(child, "name", "")) is not None
+    ]
+    if part_children:
+        for part_collection in sorted(part_children, key=lambda child: _parse_part_collection_index(getattr(child, "name", "")) or 0):
+            yield from _iter_meshes_recursive(part_collection)
+        return
+    for obj in getattr(region_collection, "objects", []) or []:
+        if getattr(obj, "type", "") == "MESH":
+            yield obj
+
+
+def _parse_part_collection_index(collection_name: str) -> int | None:
+    match = re.match(r"^part(?P<index>\d+)(?:\D.*)?$", str(collection_name or "").strip(), re.IGNORECASE)
+    if match is None:
+        return None
+    return int(match.group("index"))
+
+
+def _iter_meshes_recursive(collection):
+    seen_names: set[str] = set()
+
+    def walk(current_collection):
+        for obj in getattr(current_collection, "objects", []) or []:
+            if getattr(obj, "type", "") != "MESH":
+                continue
+            object_name = str(getattr(obj, "name_full", getattr(obj, "name", "")) or "")
+            if object_name in seen_names:
+                continue
+            seen_names.add(object_name)
+            yield obj
+        for child in getattr(current_collection, "children", []) or []:
+            yield from walk(child)
+
+    yield from walk(collection)
+
+
+def _find_proxy_armature_for_meshes(mesh_objects):
+    for mesh_obj in mesh_objects:
+        proxy_armature = find_proxy_armature_for_object(mesh_obj)
+        if proxy_armature is not None:
+            return proxy_armature
+    return None
+
+
+def _build_runtime_draw_part_from_collection_payload(payload: dict) -> RuntimeDrawPart:
+    obj = payload["object"]
+    proxy_armature = payload.get("proxy_armature")
+    cb1_override = payload.get("cb1_override", CB1_OVERRIDE_NONE)
+    explicit_bone_source = getattr(obj, "bi_bone_source_armature", None)
+    if explicit_bone_source is not None and getattr(explicit_bone_source, "type", "") != "ARMATURE":
+        explicit_bone_source = None
+    return RuntimeDrawPart(
+        draw_key=payload["draw_key"],
+        source_object=obj,
+        proxy_armature=proxy_armature,
+        hash=payload["hash"],
+        match_index_count=int(payload["match_index_count"]),
+        first_index=int(payload["first_index"]),
+        bone_namespace=str(payload["draw_key"]),
+        match_priority=int(getattr(obj, "bi_match_priority", DEFAULT_MATCH_PRIORITY) or DEFAULT_MATCH_PRIORITY),
+        bone_enabled=bool(getattr(obj, "bi_bone_enabled", True)),
+        bone_source_armature=explicit_bone_source or proxy_armature,
+        bone_slot_map_json=str(getattr(obj, "bi_bone_slot_map_json", "") or ""),
+        skin_contract=str(getattr(obj, "bi_skin_contract", "TARGET_NUMERIC_GROUPS") or "TARGET_NUMERIC_GROUPS"),
+        morph_enabled=bool(getattr(obj, "bi_morph_enabled", False)),
+        morph_source_object=getattr(obj, "bi_morph_source_object", None),
+        cb1_override=normalize_cb1_override(cb1_override, CB1_OVERRIDE_NONE),
+        cb1_profile=_resolve_object_cb1_profile(obj, cb1_override),
+        vb_layout_profile=str(getattr(obj, "bi_vb_layout_profile", "AUTO") or "AUTO"),
+        buffer_correction_mode=str(getattr(obj, "bi_buffer_correction_mode", "")),
+        base_position_path=str(getattr(obj, "bi_base_position_path", "") or ""),
+        base_position_stride=int(getattr(obj, "bi_base_position_stride", 0) or 0),
+        source_objects=tuple(payload.get("objects", ()) or (obj,)),
+    )
 
 
 def draw_parts_from_selected_objects(context) -> tuple[RuntimeDrawPart, ...]:

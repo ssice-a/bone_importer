@@ -1,20 +1,27 @@
 """Blender 操作器入口。"""
 
+import json
+import os
+
 import bpy
 
-from .core.draw_part import draw_parts_from_export_collection
+from .core.draw_part import build_target_draw_parts, draw_parts_from_export_collection
 from .core.context import find_proxy_armature_for_object, list_selected_proxy_armatures
-from .core.manifest import load_export_manifest
+from .core.manifest import load_export_manifest, write_export_manifest
 from .core.runtime_ini import write_runtime_ini_from_manifest
 from .core.action_bank_editor import (
     delete_action_at_index,
     list_actions,
     rename_action_at_index,
 )
+from .core.rx_export_plan import build_rx_export_plan
+from .core.rx_geometry_export.prepare import prepare_geometry_export_collection
+from .core.rx_mesh_analysis import analyze_mesh_route
 from .core.rx_collection_setup import (
     DEFAULT_RX_EXPORT_COLLECTION,
     apply_collection_setup_plan,
     build_collection_setup_plan,
+    build_collection_setup_plan_from_capture_manifest,
 )
 from .core.workflow import (
     clear_previous_palette_for_active_proxy,
@@ -35,10 +42,104 @@ def _has_export_collection_targets(context) -> bool:
     scene = getattr(context, "scene", None)
     if scene is None:
         return False
+    export_collection = getattr(scene, "bi_export_collection", None)
     try:
-        return bool(draw_parts_from_export_collection(getattr(scene, "bi_export_collection", None)))
+        if draw_parts_from_export_collection(export_collection):
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(build_rx_export_plan(export_collection, analyze_mesh_route).draw_parts)
     except Exception:
         return False
+
+
+def _resolve_capture_manifest_path(scene) -> str:
+    configured_path = str(getattr(scene, "bi_capture_manifest_path", "") or "").strip()
+    if configured_path:
+        return bpy.path.abspath(configured_path)
+    output_dir = bpy.path.abspath(getattr(scene, "bi_animation_output_dir", "") or "//")
+    return os.path.join(output_dir, "capture_manifest.json")
+
+
+def _read_capture_manifest_for_setup(scene) -> dict:
+    manifest_path = _resolve_capture_manifest_path(scene)
+    if not manifest_path or not os.path.exists(manifest_path):
+        raise ValueError(
+            "No runtime manifest draw_parts found. Set Capture Manifest to create IB collections automatically."
+        )
+    with open(manifest_path, "r", encoding="utf-8-sig") as manifest_file:
+        payload = json.load(manifest_file)
+    if not isinstance(payload, dict):
+        raise ValueError("capture_manifest.json is not an object")
+    return payload
+
+
+def _build_rx_collection_setup_plan_for_scene(scene):
+    root_name = (
+        getattr(getattr(scene, "bi_export_collection", None), "name", "")
+        or DEFAULT_RX_EXPORT_COLLECTION
+    )
+    manifest = load_export_manifest(scene.bi_animation_output_dir)
+    plan = build_collection_setup_plan(manifest, root_collection_name=root_name)
+    if plan.draw_parts:
+        return plan, "runtime manifest"
+    capture_manifest = _read_capture_manifest_for_setup(scene)
+    plan = build_collection_setup_plan_from_capture_manifest(capture_manifest, root_collection_name=root_name)
+    if not plan.draw_parts:
+        raise ValueError("capture_manifest.json has no visible/candidate IBs to create collections from")
+    return plan, "capture manifest"
+
+
+def _read_geometry_records(geometry_manifest_path: str) -> tuple[dict, ...]:
+    with open(geometry_manifest_path, "r", encoding="utf-8-sig") as manifest_file:
+        geometry_manifest = json.load(manifest_file)
+    return tuple(dict(record or {}) for record in geometry_manifest.get("geometry_buffers", []) or [])
+
+
+def _apply_geometry_records_to_scene_objects(geometry_records):
+    for geometry_record in geometry_records:
+        vb0_record = dict(geometry_record.get("vertex_buffers", {}).get("vb0", {}) or {})
+        base_position_path = str(vb0_record.get("file_path", "") or "")
+        base_position_stride = int(vb0_record.get("stride", 0) or 0)
+        if not base_position_path or base_position_stride <= 0:
+            continue
+        for object_name in list(geometry_record.get("object_names", []) or []):
+            obj = bpy.data.objects.get(str(object_name or ""))
+            if obj is None:
+                continue
+            if hasattr(obj, "bi_base_position_path"):
+                obj.bi_base_position_path = base_position_path
+            if hasattr(obj, "bi_base_position_stride"):
+                obj.bi_base_position_stride = base_position_stride
+            if hasattr(obj, "bi_force_replace_geometry"):
+                obj.bi_force_replace_geometry = True
+
+
+def _export_geometry_if_requested(context, export_type: str):
+    scene = context.scene
+    if export_type == "INI" or not bool(getattr(scene, "bi_rx_export_geometry", True)):
+        return None
+    geometry_result = prepare_geometry_export_collection(
+        context=context,
+        source_collection=getattr(scene, "bi_export_collection", None),
+        output_dir=scene.bi_animation_output_dir,
+        capture_manifest_path=str(getattr(scene, "bi_capture_manifest_path", "") or ""),
+    )
+    geometry_records = _read_geometry_records(geometry_result["manifest_path"])
+    _apply_geometry_records_to_scene_objects(geometry_records)
+    draw_parts = build_target_draw_parts(context)
+    write_export_manifest(
+        output_directory=scene.bi_animation_output_dir,
+        clip_name=scene.bi_animation_clip_name,
+        clip_id=scene.bi_animation_clip_id,
+        draw_parts=draw_parts,
+        geometry_results=geometry_records,
+    )
+    return {
+        "result": geometry_result,
+        "geometry_records": geometry_records,
+    }
 
 
 def _resolve_rx_source_fps(scene) -> float:
@@ -251,11 +352,11 @@ class BI_OT_export_palette(bpy.types.Operator):
 
 
 class BI_OT_create_rx_export_collection(bpy.types.Operator):
-    """Create or sync the RX v3 collection tree from the current runtime manifest."""
+    """Create or sync the RX v3 collection tree from runtime or capture manifests."""
 
     bl_idname = "object.bi_create_rx_export_collection"
     bl_label = "Create/Sync RX Collections"
-    bl_description = "Create the RX Export Collection and IB child collections from rx_export_manifest.json"
+    bl_description = "Create the RX Export Collection and IB child collections automatically"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -265,15 +366,7 @@ class BI_OT_create_rx_export_collection(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         try:
-            manifest = load_export_manifest(scene.bi_animation_output_dir)
-            root_name = (
-                getattr(getattr(scene, "bi_export_collection", None), "name", "")
-                or DEFAULT_RX_EXPORT_COLLECTION
-            )
-            plan = build_collection_setup_plan(manifest, root_collection_name=root_name)
-            if not plan.draw_parts:
-                self.report({"ERROR"}, "rx_export_manifest.json has no draw_parts to create collections from")
-                return {"CANCELLED"}
+            plan, source_name = _build_rx_collection_setup_plan_for_scene(scene)
             result = apply_collection_setup_plan(context, plan)
             scene.bi_export_collection = bpy.data.collections[result.root_collection_name]
         except ValueError as exc:
@@ -284,7 +377,7 @@ class BI_OT_create_rx_export_collection(bpy.types.Operator):
             return {"CANCELLED"}
 
         message = (
-            f"Synced {result.draw_part_count} IB collection(s), "
+            f"Synced {result.draw_part_count} IB collection(s) from {source_name}, "
             f"linked {result.linked_object_count} object(s)"
         )
         self.report({"INFO"}, message)
@@ -323,6 +416,7 @@ class BI_OT_export_rx_package(bpy.types.Operator):
 
             bone_result = None
             morph_result = None
+            geometry_export = _export_geometry_if_requested(context, export_type)
             if export_type in {"FULL", "BONE"}:
                 bone_result = export_animation_for_selected_proxy_armatures(
                     context,
@@ -366,7 +460,8 @@ class BI_OT_export_rx_package(bpy.types.Operator):
             f"runtime_step={ticks_per_sample} present(s)",
         ]
         if bool(getattr(scene, "bi_rx_export_geometry", True)):
-            messages.append("mesh=enabled")
+            mesh_count = len(geometry_export["geometry_records"]) if geometry_export is not None else 0
+            messages.append(f"mesh={mesh_count}")
         else:
             messages.append("mesh=reuse")
         if bone_result is not None:

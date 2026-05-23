@@ -54,6 +54,16 @@ def _slot_ids_from_vertex_groups(obj) -> tuple[int, ...]:
     return tuple(sorted(slot_ids))
 
 
+def _slot_ids_from_draw_part_source_objects(draw_part) -> tuple[int, ...]:
+    slot_ids = set()
+    source_objects = tuple(getattr(draw_part, "source_objects", ()) or ())
+    if not source_objects:
+        source_objects = (getattr(draw_part, "source_object", None),)
+    for obj in source_objects:
+        slot_ids.update(_slot_ids_from_vertex_groups(obj))
+    return tuple(sorted(slot_ids))
+
+
 def _slot_ids_from_pose_bones(armature, draw_part=None) -> tuple[int, ...]:
     if armature is None or getattr(armature, "type", "") != "ARMATURE":
         return ()
@@ -128,7 +138,7 @@ def resolve_slot_contract(draw_part) -> SlotContract:
         slot_ids = _slot_ids_from_pose_bones(getattr(draw_part, "bone_source_armature", None), draw_part)
         source = "source_armature_slots"
     else:
-        slot_ids = _slot_ids_from_vertex_groups(getattr(draw_part, "source_object", None))
+        slot_ids = _slot_ids_from_draw_part_source_objects(draw_part)
         source = "target_numeric_groups"
         if not slot_ids:
             slot_ids = _slot_ids_from_pose_bones(getattr(draw_part, "proxy_armature", None), draw_part)
@@ -157,11 +167,15 @@ def _pose_bone_exists(armature, bone_name: str) -> bool:
 def _find_source_bone_for_slot(source_armature, draw_part, slot_id: int) -> str:
     if source_armature is None or getattr(source_armature, "type", "") != "ARMATURE":
         return ""
-    draw_object_name = str(getattr(draw_part.source_object, "name", "") or "")
-    candidates = (
-        f"{int(slot_id)}__{draw_object_name}",
-        str(int(slot_id)),
-    )
+    draw_object_names = []
+    for obj in tuple(getattr(draw_part, "source_objects", ()) or (getattr(draw_part, "source_object", None),)):
+        object_name = str(getattr(obj, "name", "") or "")
+        if object_name and object_name not in draw_object_names:
+            draw_object_names.append(object_name)
+    draw_key_name = str(getattr(draw_part, "draw_key", "") or "").replace("_", "-")
+    if draw_key_name and draw_key_name not in draw_object_names:
+        draw_object_names.append(draw_key_name)
+    candidates = tuple(f"{int(slot_id)}__{name}" for name in draw_object_names) + (str(int(slot_id)),)
     for candidate in candidates:
         if _pose_bone_exists(source_armature, candidate):
             return candidate
@@ -171,7 +185,7 @@ def _find_source_bone_for_slot(source_armature, draw_part, slot_id: int) -> str:
         explicit_mesh_key = str(getattr(pose_bone, "bi_mesh_key", "") or "")
         if explicit_slot != int(slot_id):
             continue
-        if explicit_mesh_key and explicit_mesh_key != draw_object_name:
+        if explicit_mesh_key and explicit_mesh_key not in draw_object_names:
             continue
         return pose_bone.name
 

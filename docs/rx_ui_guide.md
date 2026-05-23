@@ -10,7 +10,7 @@ IB 集合里的可见网格，就是运行时包真正绘制的网格。
 ## Core Mental Model / 核心心智模型
 
 ```text
-Create/Sync RX Collections
+Set Capture Manifest, then Create/Sync RX Collections
 -> put visible meshes under IB collections
 -> choose Export Type
 -> optionally export mesh buffers
@@ -32,7 +32,7 @@ Create/Sync RX Collections
 | Output Dir / 输出目录 | Folder containing buffers, manifests, generated ini, and hlsl. / 存放缓冲、清单、生成 ini 和 hlsl 的目录。 |
 | Capture Manifest / 捕获清单 | Explicit `capture_manifest.json` path used for game vertex layouts. / 显式选择 `capture_manifest.json`，用于读取游戏顶点布局。 |
 | RX Export Collection / RX 导出集合 | Root collection whose children are IB Collections. / 根集合，其子集合是各个 IB 集合。 |
-| Create/Sync RX Collections / 创建/同步 RX 集合 | Create the root and IB collections from the current manifest or selected targets. / 从当前清单或选择目标创建根集合与 IB 集合。 |
+| Create/Sync RX Collections / 创建/同步 RX 集合 | Create the root and IB collections automatically from the current runtime manifest, or from `Capture Manifest` on first setup. Users only drag meshes into the generated IB collections. / 从运行时清单自动创建；首次使用时从 `Capture Manifest` 自动创建 IB 集合。用户只需要把物体拖进对应 IB 集合。 |
 | Export Type / 导出类型 | `Full RX Package`, `Bone Payload Only`, `Morph Payload Only`, or `INI Only`. / 完整包、仅骨骼、仅形态键或仅 ini。 |
 | Export Mesh / 导出 Mesh | Default enabled. Refresh mesh buffers when the chosen export needs draw buffers. / 默认开启。导出类型需要绘制缓冲时刷新 Mesh 缓冲。 |
 
